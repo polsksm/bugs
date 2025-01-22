@@ -32,6 +32,21 @@ struct WorldCell {
 } *g_worldCell;
 u_int64_t g_numBugs = 0;
 
+void DisplayBugDNA(Bug *bug) {
+  int i;
+
+  for (i = 31; i >= 0; i--) {
+    printf("%u", (bug->dna >> i) & 1);
+    if (i % 8 == 0)
+      printf(" ");
+  }
+  printf("\nHealth: (%u) -> %u\n", bug->health, bug->dna >> 24 & 0xff);
+  printf("Sex: (%u) %u\n", bug->sex, bug->dna >> 23 & 0x01);
+  printf("Vision:(%u) %u\n", bug->vision, bug->dna >> 21 & 0x03);
+  printf("Speed:(%u) %u\n", bug->speed, bug->dna >> 19 & 0x03);
+  printf("Drive:(%u) %u\n", bug->drive, bug->dna >> 15 & 0x0f);
+}
+
 Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   bugs = realloc(bugs, (g_numBugs + 1) * sizeof(Bug));
   if (bugs == NULL) {
@@ -40,15 +55,48 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   }
   bugs[g_numBugs].x = i % WORLD_WIDTH;
   bugs[g_numBugs].y = i / WORLD_WIDTH;
-  g_worldCell[i].color = WHITE;
+  bugs[g_numBugs].isAlive = 1;
+  bugs[g_numBugs].sex = rand() % 2;
+  bugs[g_numBugs].health = 255;
+  bugs[g_numBugs].vision = rand() % 5;
+  bugs[g_numBugs].speed = rand() % 5;
+  bugs[g_numBugs].drive = rand() % 17;
+  // dna is the health/sex/vision etc combined into one number
+  bugs[g_numBugs].dna = bugs[g_numBugs].health << 24;
+  bugs[g_numBugs].dna |= bugs[g_numBugs].sex << 23;
+  bugs[g_numBugs].dna |= bugs[g_numBugs].vision << 21;
+  bugs[g_numBugs].dna |= bugs[g_numBugs].speed << 19;
+  bugs[g_numBugs].dna |= bugs[g_numBugs].drive << 15;
+
+  // bugs[g_numBugs].dna |= bugs[g_numBugs].vision << 8 | bugs[g_numBugs].speed;
+  // bugs[g_numBugs].dna |= bugs[g_numBugs].drive;
+
+  DisplayBugDNA(&bugs[g_numBugs]);
+
+  g_worldCell[i].color.r = bugs[g_numBugs].dna >> 24 & 0xff;
+  g_worldCell[i].color.g = bugs[g_numBugs].dna >> 16 & 0xff;
+  g_worldCell[i].color.b = bugs[g_numBugs].dna >> 8 & 0xff;
+  g_worldCell[i].color.a = 255;
   g_worldCell[i].type = 3;
   ++g_numBugs;
   return bugs;
 }
 
-void UpdateStatusLine(void) {
+void recalculateDNA(Bug *bug) {
+  bug->dna = bug->health << 24;
+  bug->dna |= bug->sex << 23;
+  bug->dna |= bug->vision << 21;
+  bug->dna |= bug->speed << 19;
+  bug->dna |= bug->drive << 15;
+}
+void UpdateStatusLine(Bug *bugs) {
   char status_line[100];
-  sprintf(status_line, "BUGS: %lu", g_numBugs);
+  u_int32_t alive = 0;
+  for (int i = 0; i < g_numBugs; ++i) {
+    if (bugs[i].isAlive)
+      ++alive;
+  }
+  sprintf(status_line, "BUGS: %u", alive);
   DrawText(status_line, 10, SCREEN_HEIGHT - 23, 20, WHITE);
 }
 
@@ -62,7 +110,7 @@ int main(void) {
   }
   // Initialize raylib
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Bug Simulation");
-  SetTargetFPS(60);
+  SetTargetFPS(120);
 
   // Initialize random number generator
   srand(time(NULL));
@@ -86,13 +134,15 @@ int main(void) {
     }
   }
 
-  UpdateStatusLine();
-
   // Main game loop
   u_int64_t frame = 0;
+  UpdateStatusLine(bugs);
   while (!WindowShouldClose()) {
     for (int i = 0; i < g_numBugs; ++i) {
-      g_worldCell[bugs[i].y * WORLD_WIDTH + bugs[i].x].color = BLACK;
+      if (!bugs[i].isAlive)
+        continue;
+      int screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
+      g_worldCell[screen_pos].color = BLACK;
       // Move bugs randomly
       bugs[i].x += (rand() % 3) - 1;
       bugs[i].y += (rand() % 3) - 1;
@@ -105,21 +155,33 @@ int main(void) {
         bugs[i].y = WORLD_HEIGHT - 1;
       if (bugs[i].y >= WORLD_HEIGHT)
         bugs[i].y = 0;
-      /*
-      if (g_worldCell[bugs[i].y * WORLD_WIDTH + bugs[i].x].type == 1) {
+      screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
+
+      bugs[i].health -= 1;
+      if (bugs[i].health == 0) {
+        g_worldCell[screen_pos].color = BLACK;
+        bugs[i].isAlive = 0;
+      }
+
+      if (g_worldCell[screen_pos].type == 1) {
         bugs[i].health += bugs[i].health > 245 ? 255 - bugs[i].health : 10;
-      } else if (g_worldCell[bugs[i].y * WORLD_WIDTH + bugs[i].x].type == 2) {
+      } else if (g_worldCell[screen_pos].type == 2) {
         bugs[i].health -= bugs[i].health < 10 ? bugs[i].health : 10;
         if (bugs[i].health == 0) {
-          g_worldCell[bugs[i].y * WORLD_WIDTH + bugs[i].x].color = BLACK;
-          for (int j = i; j < g_numBugs - 1; j++) {
-            bugs[j] = bugs[j + 1];
-          }
-          --g_numBugs;
+          g_worldCell[screen_pos].color = BLACK;
+          bugs[i].isAlive = 0;
         }
       }
-      */
-      g_worldCell[bugs[i].y * WORLD_WIDTH + bugs[i].x].color = WHITE;
+      recalculateDNA(&bugs[i]);
+      // if we decide to leave the carcass on the screen
+      // this if switch needs to be removed
+      if (bugs[i].isAlive) {
+        // set screen pixel to bug color
+        g_worldCell[screen_pos].color.r = bugs[i].dna >> 24 & 0xff;
+        g_worldCell[screen_pos].color.g = bugs[i].dna >> 16 & 0xff;
+        g_worldCell[screen_pos].color.b = bugs[i].dna >> 8 & 0xff;
+        g_worldCell[screen_pos].color.a = 255;
+      }
     }
     // Update bugs
     /*
@@ -148,7 +210,7 @@ int main(void) {
     // Draw frame
     BeginDrawing();
     ClearBackground(BLACK);
-    UpdateStatusLine();
+    UpdateStatusLine(bugs);
     for (int i = 0; i < WORLD_HEIGHT * WORLD_WIDTH; ++i) {
       // DrawPixel(g_worldCell[i]., bugs[i].y, bugs[i].color);
       DrawPixel(i % WORLD_WIDTH, i / WORLD_WIDTH, g_worldCell[i].color);
