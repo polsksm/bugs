@@ -11,8 +11,8 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 624
 
-#define INIT_BUG_PROB 0.01
-#define INIT_FOOD_PROB 0.01
+#define INIT_BUG_PROB 0.001
+#define INIT_FOOD_PROB 0.9
 #define INIT_POISON_PROB 0.005
 
 typedef struct Bug {
@@ -27,9 +27,11 @@ typedef struct Bug {
 } Bug;
 
 struct WorldCell {
-  unsigned char type;
-  Color color;
+  unsigned char type[WORLD_WIDTH * WORLD_HEIGHT];
+  Color color[WORLD_WIDTH * WORLD_HEIGHT];
+  Bug *bug[WORLD_WIDTH * WORLD_HEIGHT];
 } *g_worldCell;
+
 u_int64_t g_numBugs = 0;
 
 void DisplayBugDNA(Bug *bug) {
@@ -68,9 +70,6 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   bugs[g_numBugs].dna |= bugs[g_numBugs].speed << 19;
   bugs[g_numBugs].dna |= bugs[g_numBugs].drive << 15;
 
-  // bugs[g_numBugs].dna |= bugs[g_numBugs].vision << 8 | bugs[g_numBugs].speed;
-  // bugs[g_numBugs].dna |= bugs[g_numBugs].drive;
-
   DisplayBugDNA(&bugs[g_numBugs]);
 
   g_worldCell[i].color.r = bugs[g_numBugs].dna >> 24 & 0xff;
@@ -78,6 +77,7 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   g_worldCell[i].color.b = bugs[g_numBugs].dna >> 8 & 0xff;
   g_worldCell[i].color.a = 255;
   g_worldCell[i].type = 3;
+  g_worldCell[i].bug = &bugs[g_numBugs];
   ++g_numBugs;
   return bugs;
 }
@@ -89,21 +89,58 @@ void recalculateDNA(Bug *bug) {
   bug->dna |= bug->speed << 19;
   bug->dna |= bug->drive << 15;
 }
-void UpdateStatusLine(Bug *bugs) {
+void UpdateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
   char status_line[100];
   u_int32_t alive = 0;
+  u_int32_t health = 0;
   for (int i = 0; i < g_numBugs; ++i) {
-    if (bugs[i].isAlive)
+    if (bugs[i].isAlive) {
       ++alive;
+      health += bugs[i].health;
+    }
   }
-  sprintf(status_line, "BUGS: %u", alive);
+  sprintf(status_line, "BUGS: %u\tFrame: %lu", alive, frame);
   DrawText(status_line, 10, SCREEN_HEIGHT - 23, 20, WHITE);
+  if (ofp)
+    fprintf(ofp, "%u\t%lu\n", alive, frame);
 }
 
-int main(void) {
+u_int64_t moveBug(Bug *bug) {
+  // Move bugs randomly
+  bug->x += (rand() % 3) - 1;
+  bug->y += (rand() % 3) - 1;
+  // Wrap around screen
+  if (bug->x < 0)
+    bug->x = WORLD_WIDTH - 1;
+  if (bug->x >= WORLD_WIDTH)
+    bug->x = 0;
+  if (bug->y < 0)
+    bug->y = WORLD_HEIGHT - 1;
+  if (bug->y >= WORLD_HEIGHT)
+    bug->y = 0;
+  bug->health -= 1;
+  u_int64_t screen_pos = bug->y * WORLD_WIDTH + bug->x;
+  if (bug->health == 0) {
+    // leave the carcass as food
+    g_worldCell[screen_pos].color = GREEN;
+    bug->isAlive = 0;
+    g_worldCell[screen_pos].bug = NULL;
+    g_worldCell[screen_pos].type = 1;
+  }
+  return screen_pos;
+}
 
-  g_worldCell = (struct WorldCell *)malloc(WORLD_WIDTH * WORLD_HEIGHT *
+int main(int argc, char **argv) {
+  FILE *ofp = NULL;
+  if (argc == 1) {
+    ofp = fopen("bug_simulation.log", "w");
+  }
+
+  /*g_worldCell = (struct WorldCell *)malloc(WORLD_WIDTH * WORLD_HEIGHT *
                                            sizeof(struct WorldCell));
+                                           */
+  g_worldCell = (struct WorldCell *)malloc(sizeof(struct WorldCell));
+
   if (g_worldCell == NULL) {
     printf("Error: Unable to allocate memory for g_worldCell\n");
     return 1;
@@ -120,11 +157,12 @@ int main(void) {
 
   printf("Initializing world\n");
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; i++) {
-    if (rand() % 100 < INIT_BUG_PROB * 100) {
+    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
       bugs = ImmaculateBirthABug(i, bugs);
     } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
-      g_worldCell[i].type = 1;
+      g_worldCell->type[i] = 1;
       g_worldCell[i].color = GREEN;
+      g_worldCell[i].color.a = 128;
     } else if (rand() % 100 < INIT_POISON_PROB * 100) {
       g_worldCell[i].type = 2;
       g_worldCell[i].color = RED;
@@ -134,34 +172,30 @@ int main(void) {
     }
   }
 
-  // Main game loop
   u_int64_t frame = 0;
-  UpdateStatusLine(bugs);
+  UpdateStatusLine(&bugs[0], frame, ofp);
+
+  Image img = {.data = (Color *)g_worldCell,
+               .width = WORLD_WIDTH,
+               .height = WORLD_HEIGHT,
+               .mipmaps = 1,
+               .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+  Texture2D texture = LoadTextureFromImage(img);
+
+  // Main game loop
   while (!WindowShouldClose()) {
     for (int i = 0; i < g_numBugs; ++i) {
       if (!bugs[i].isAlive)
         continue;
-      int screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
+      u_int64_t screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
       g_worldCell[screen_pos].color = BLACK;
-      // Move bugs randomly
-      bugs[i].x += (rand() % 3) - 1;
-      bugs[i].y += (rand() % 3) - 1;
-      // Wrap around screen
-      if (bugs[i].x < 0)
-        bugs[i].x = WORLD_WIDTH - 1;
-      if (bugs[i].x >= WORLD_WIDTH)
-        bugs[i].x = 0;
-      if (bugs[i].y < 0)
-        bugs[i].y = WORLD_HEIGHT - 1;
-      if (bugs[i].y >= WORLD_HEIGHT)
-        bugs[i].y = 0;
-      screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
+      g_worldCell[screen_pos].bug = NULL;
+      g_worldCell[screen_pos].type = 0;
 
-      bugs[i].health -= 1;
-      if (bugs[i].health == 0) {
-        g_worldCell[screen_pos].color = BLACK;
-        bugs[i].isAlive = 0;
-      }
+      screen_pos = moveBug(&bugs[i]);
+      // moving could mean the death of the bug
+      if (!bugs[i].isAlive)
+        continue;
 
       if (g_worldCell[screen_pos].type == 1) {
         bugs[i].health += bugs[i].health > 245 ? 255 - bugs[i].health : 10;
@@ -170,51 +204,34 @@ int main(void) {
         if (bugs[i].health == 0) {
           g_worldCell[screen_pos].color = BLACK;
           bugs[i].isAlive = 0;
+          g_worldCell[screen_pos].bug = NULL;
+          g_worldCell[screen_pos].type = 0;
+          continue;
         }
       }
       recalculateDNA(&bugs[i]);
-      // if we decide to leave the carcass on the screen
-      // this if switch needs to be removed
       if (bugs[i].isAlive) {
         // set screen pixel to bug color
         g_worldCell[screen_pos].color.r = bugs[i].dna >> 24 & 0xff;
         g_worldCell[screen_pos].color.g = bugs[i].dna >> 16 & 0xff;
         g_worldCell[screen_pos].color.b = bugs[i].dna >> 8 & 0xff;
         g_worldCell[screen_pos].color.a = 255;
+        g_worldCell[screen_pos].type = 3;
+        g_worldCell[screen_pos].bug = &bugs[i];
       }
     }
-    // Update bugs
-    /*
-    for (int i = 0; i < INIT_BUG_COUNT; i++) {
-      // Move bugs randomly
-      bugs[i].x += (rand() % 3) - 1;
-      bugs[i].y += (rand() % 3) - 1;
-
-      // Wrap around screen
-      if (bugs[i].x < 0)
-        bugs[i].x = WORLD_WIDTH - 1;
-      if (bugs[i].x >= WORLD_WIDTH)
-        bugs[i].x = 0;
-      if (bugs[i].y < 0)
-        bugs[i].y = WORLD_HEIGHT - 1;
-      if (bugs[i].y >= WORLD_HEIGHT)
-        bugs[i].y = 0;
-
-      // Change color randomly
-      if (rand() % 100 < 5) {
-        bugs[i].color = (Color){rand() % 256, rand() % 256, rand() % 256, 255};
-      }
-  }
-      */
 
     // Draw frame
     BeginDrawing();
     ClearBackground(BLACK);
-    UpdateStatusLine(bugs);
+    UpdateStatusLine(bugs, frame, ofp);
+    UpdateTexture(texture, g_worldCell->color);
+    DrawTexture(texture, 0, 0, WHITE);
+    /*
     for (int i = 0; i < WORLD_HEIGHT * WORLD_WIDTH; ++i) {
-      // DrawPixel(g_worldCell[i]., bugs[i].y, bugs[i].color);
       DrawPixel(i % WORLD_WIDTH, i / WORLD_WIDTH, g_worldCell[i].color);
     }
+    */
     EndDrawing();
     ++frame;
     if (frame % 100 == 0)
@@ -223,6 +240,10 @@ int main(void) {
 
   // Deinitialize raylib
   CloseWindow();
+  free(g_worldCell);
+  free(bugs);
+  if (ofp)
+    fclose(ofp);
 
   return 0;
 }
