@@ -11,7 +11,7 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 624
 
-#define INIT_BUG_PROB 0.001
+#define INIT_BUG_PROB 0.011
 #define INIT_FOOD_PROB 0.9
 #define INIT_POISON_PROB 0.005
 
@@ -72,12 +72,12 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
 
   DisplayBugDNA(&bugs[g_numBugs]);
 
-  g_worldCell[i].color.r = bugs[g_numBugs].dna >> 24 & 0xff;
-  g_worldCell[i].color.g = bugs[g_numBugs].dna >> 16 & 0xff;
-  g_worldCell[i].color.b = bugs[g_numBugs].dna >> 8 & 0xff;
-  g_worldCell[i].color.a = 255;
-  g_worldCell[i].type = 3;
-  g_worldCell[i].bug = &bugs[g_numBugs];
+  g_worldCell->color[i].r = bugs[g_numBugs].dna >> 24 & 0xff;
+  g_worldCell->color[i].g = bugs[g_numBugs].dna >> 16 & 0xff;
+  g_worldCell->color[i].b = bugs[g_numBugs].dna >> 8 & 0xff;
+  g_worldCell->color[i].a = 255;
+  g_worldCell->type[i] = 3;
+  g_worldCell->bug[i] = &bugs[g_numBugs];
   ++g_numBugs;
   return bugs;
 }
@@ -122,10 +122,10 @@ u_int64_t moveBug(Bug *bug) {
   u_int64_t screen_pos = bug->y * WORLD_WIDTH + bug->x;
   if (bug->health == 0) {
     // leave the carcass as food
-    g_worldCell[screen_pos].color = GREEN;
+    g_worldCell->color[screen_pos] = GREEN;
     bug->isAlive = 0;
-    g_worldCell[screen_pos].bug = NULL;
-    g_worldCell[screen_pos].type = 1;
+    g_worldCell->bug[screen_pos] = NULL;
+    g_worldCell->type[screen_pos] = 1;
   }
   return screen_pos;
 }
@@ -161,14 +161,14 @@ int main(int argc, char **argv) {
       bugs = ImmaculateBirthABug(i, bugs);
     } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
       g_worldCell->type[i] = 1;
-      g_worldCell[i].color = GREEN;
-      g_worldCell[i].color.a = 128;
+      g_worldCell->color[i] = GREEN;
+      g_worldCell->color[i].a = 128;
     } else if (rand() % 100 < INIT_POISON_PROB * 100) {
-      g_worldCell[i].type = 2;
-      g_worldCell[i].color = RED;
+      g_worldCell->type[i] = 2;
+      g_worldCell->color[i] = RED;
     } else {
-      g_worldCell[i].type = 0;
-      g_worldCell[i].color = BLACK;
+      g_worldCell->type[i] = 0;
+      g_worldCell->color[i] = BLACK;
     }
   }
 
@@ -188,36 +188,36 @@ int main(int argc, char **argv) {
       if (!bugs[i].isAlive)
         continue;
       u_int64_t screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
-      g_worldCell[screen_pos].color = BLACK;
-      g_worldCell[screen_pos].bug = NULL;
-      g_worldCell[screen_pos].type = 0;
+      g_worldCell->color[screen_pos] = BLACK;
+      g_worldCell->bug[screen_pos] = NULL;
+      g_worldCell->type[screen_pos] = 0;
 
       screen_pos = moveBug(&bugs[i]);
       // moving could mean the death of the bug
       if (!bugs[i].isAlive)
         continue;
 
-      if (g_worldCell[screen_pos].type == 1) {
+      if (g_worldCell->type[screen_pos] == 1) {
         bugs[i].health += bugs[i].health > 245 ? 255 - bugs[i].health : 10;
-      } else if (g_worldCell[screen_pos].type == 2) {
+      } else if (g_worldCell->type[screen_pos] == 2) {
         bugs[i].health -= bugs[i].health < 10 ? bugs[i].health : 10;
         if (bugs[i].health == 0) {
-          g_worldCell[screen_pos].color = BLACK;
+          g_worldCell->color[screen_pos] = BLACK;
           bugs[i].isAlive = 0;
-          g_worldCell[screen_pos].bug = NULL;
-          g_worldCell[screen_pos].type = 0;
+          g_worldCell->bug[screen_pos] = NULL;
+          g_worldCell->type[screen_pos] = 0;
           continue;
         }
       }
       recalculateDNA(&bugs[i]);
       if (bugs[i].isAlive) {
         // set screen pixel to bug color
-        g_worldCell[screen_pos].color.r = bugs[i].dna >> 24 & 0xff;
-        g_worldCell[screen_pos].color.g = bugs[i].dna >> 16 & 0xff;
-        g_worldCell[screen_pos].color.b = bugs[i].dna >> 8 & 0xff;
-        g_worldCell[screen_pos].color.a = 255;
-        g_worldCell[screen_pos].type = 3;
-        g_worldCell[screen_pos].bug = &bugs[i];
+        g_worldCell->color[i].r = bugs[i].dna >> 24 & 0xff;
+        g_worldCell->color[i].g = bugs[i].dna >> 16 & 0xff;
+        g_worldCell->color[i].b = bugs[i].dna >> 8 & 0xff;
+        g_worldCell->color[i].a = 255;
+        g_worldCell->type[i] = 3;
+        g_worldCell->bug[i] = &bugs[i];
       }
     }
 
