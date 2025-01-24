@@ -11,9 +11,11 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 624
 
-#define INIT_BUG_PROB 0.011
+#define INIT_BUG_PROB 0.01
 #define INIT_FOOD_PROB 0.9
-#define INIT_POISON_PROB 0.005
+#define INIT_POISON_PROB 0.00
+
+Color FOOD_COLOR = {255, 255, 0, 255};
 
 typedef struct Bug {
   int x, y;             // Position
@@ -25,14 +27,22 @@ typedef struct Bug {
   unsigned char drive;  // 0 - 16 - how much the bug prefers sex over food
   uint32_t dna;         // this doubles for the bug's color
 } Bug;
-
+typedef enum { EMPTY = 0, FOOD = 1, POISON = 2, BUG = 3 } WORLDCELL_TYPE;
 struct WorldCell {
-  unsigned char type[WORLD_WIDTH * WORLD_HEIGHT];
+  WORLDCELL_TYPE type[WORLD_WIDTH * WORLD_HEIGHT];
   Color color[WORLD_WIDTH * WORLD_HEIGHT];
   Bug *bug[WORLD_WIDTH * WORLD_HEIGHT];
 } *g_worldCell;
 
 u_int64_t g_numBugs = 0;
+
+void bugDeath(Bug *bugs, u_int64_t screen_pos);
+void DisplayBugDNA(Bug *bug);
+Bug *ImmaculateBirthABug(int i, Bug *bugs);
+void recalculateDNA(Bug *bug);
+void UpdateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
+u_int64_t moveBug(Bug *bug);
+int bugsAreSameSex(Bug *bug1, Bug *bug2);
 
 void DisplayBugDNA(Bug *bug) {
   int i;
@@ -57,6 +67,8 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   }
   bugs[g_numBugs].x = i % WORLD_WIDTH;
   bugs[g_numBugs].y = i / WORLD_WIDTH;
+  printf("Bug %lu: x: %d y: %d\n", g_numBugs, bugs[g_numBugs].x,
+         bugs[g_numBugs].y);
   bugs[g_numBugs].isAlive = 1;
   bugs[g_numBugs].sex = rand() % 2;
   bugs[g_numBugs].health = 255;
@@ -70,13 +82,13 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   bugs[g_numBugs].dna |= bugs[g_numBugs].speed << 19;
   bugs[g_numBugs].dna |= bugs[g_numBugs].drive << 15;
 
-  DisplayBugDNA(&bugs[g_numBugs]);
+  // DisplayBugDNA(&bugs[g_numBugs]);
 
   g_worldCell->color[i].r = bugs[g_numBugs].dna >> 24 & 0xff;
   g_worldCell->color[i].g = bugs[g_numBugs].dna >> 16 & 0xff;
   g_worldCell->color[i].b = bugs[g_numBugs].dna >> 8 & 0xff;
   g_worldCell->color[i].a = 255;
-  g_worldCell->type[i] = 3;
+  g_worldCell->type[i] = BUG;
   g_worldCell->bug[i] = &bugs[g_numBugs];
   ++g_numBugs;
   return bugs;
@@ -121,13 +133,77 @@ u_int64_t moveBug(Bug *bug) {
   bug->health -= 1;
   u_int64_t screen_pos = bug->y * WORLD_WIDTH + bug->x;
   if (bug->health == 0) {
+    bugDeath(bug, screen_pos);
     // leave the carcass as food
-    g_worldCell->color[screen_pos] = GREEN;
+    g_worldCell->color[screen_pos] = FOOD_COLOR;
     bug->isAlive = 0;
     g_worldCell->bug[screen_pos] = NULL;
-    g_worldCell->type[screen_pos] = 1;
+    g_worldCell->type[screen_pos] = FOOD;
   }
   return screen_pos;
+}
+void bugDeath(Bug *bugs, u_int64_t screen_pos) {
+  g_worldCell->color[screen_pos] = FOOD_COLOR;
+  bugs->isAlive = 0;
+  g_worldCell->bug[screen_pos] = NULL;
+  g_worldCell->type[screen_pos] = FOOD;
+}
+
+int bugsAreSameSex(Bug *bug1, Bug *bug2) {
+  return bug1->sex == bug2->sex ? 1 : 0;
+}
+
+/// @brief Create a new bug using the DNA of the parents
+int birthABug(Bug *bug, u_int64_t screen_pos) {
+  if (g_numBugs >= WORLD_WIDTH * WORLD_HEIGHT) {
+    printf("Error: Too many bugs\n");
+    return 0;
+  }
+  bug = realloc(bug, (g_numBugs + 1) * sizeof(Bug));
+  if (bug == NULL) {
+    perror("Error: Unable to allocate memory for bugs\n");
+    exit(1);
+  }
+
+  Bug *baby = &bug[g_numBugs];
+  Bug *mom = g_worldCell->bug[screen_pos];
+  Bug *dad = bug;
+  // DNA is a combination of the parents' DNA
+  baby->health = (mom->health + dad->health) / 2;
+  baby->vision = (mom->vision + dad->vision) / 2;
+  baby->speed = (mom->speed + dad->speed) / 2;
+  baby->drive = (mom->drive + dad->drive) / 2;
+  baby->sex = rand() % 2;
+  // perform  a mutation
+  // 1 in 100 chance of a mutation
+  if (rand() % 100 == 0) {
+    int bit = rand() % 32;
+    baby->dna ^= 1 << bit;
+  }
+
+  // find an empty spot close to the parents
+  int x = screen_pos % WORLD_WIDTH;
+  int y = screen_pos / WORLD_WIDTH;
+  int dx = rand() % 3 - 1;
+  int dy = rand() % 3 - 1;
+  while (g_worldCell->type[(y + dy) * WORLD_WIDTH + (x + dx)] != EMPTY) {
+    dx = rand() % 3 - 1;
+    dy = rand() % 3 - 1;
+  }
+  baby->x = x + dx;
+  baby->y = y + dy;
+  if (baby->x < 0)
+    baby->x = WORLD_WIDTH - 1;
+  if (baby->x >= WORLD_WIDTH)
+    baby->x = 0;
+  if (baby->y < 0)
+    baby->y = WORLD_HEIGHT - 1;
+  if (baby->y >= WORLD_HEIGHT)
+    baby->y = 0;
+  baby->isAlive = 1;
+  recalculateDNA(baby);
+
+  return 1;
 }
 
 int main(int argc, char **argv) {
@@ -136,9 +212,6 @@ int main(int argc, char **argv) {
     ofp = fopen("bug_simulation.log", "w");
   }
 
-  /*g_worldCell = (struct WorldCell *)malloc(WORLD_WIDTH * WORLD_HEIGHT *
-                                           sizeof(struct WorldCell));
-                                           */
   g_worldCell = (struct WorldCell *)malloc(sizeof(struct WorldCell));
 
   if (g_worldCell == NULL) {
@@ -147,7 +220,7 @@ int main(int argc, char **argv) {
   }
   // Initialize raylib
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Bug Simulation");
-  SetTargetFPS(120);
+  SetTargetFPS(60);
 
   // Initialize random number generator
   srand(time(NULL));
@@ -156,18 +229,18 @@ int main(int argc, char **argv) {
   Bug *bugs = NULL;
 
   printf("Initializing world\n");
-  for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; i++) {
-    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
+  for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+    if (rand() % 100 < INIT_BUG_PROB * 100) {
       bugs = ImmaculateBirthABug(i, bugs);
     } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
-      g_worldCell->type[i] = 1;
-      g_worldCell->color[i] = GREEN;
+      g_worldCell->type[i] = FOOD;
+      g_worldCell->color[i] = FOOD_COLOR;
       g_worldCell->color[i].a = 128;
     } else if (rand() % 100 < INIT_POISON_PROB * 100) {
-      g_worldCell->type[i] = 2;
+      g_worldCell->type[i] = POISON;
       g_worldCell->color[i] = RED;
     } else {
-      g_worldCell->type[i] = 0;
+      g_worldCell->type[i] = EMPTY;
       g_worldCell->color[i] = BLACK;
     }
   }
@@ -175,7 +248,7 @@ int main(int argc, char **argv) {
   u_int64_t frame = 0;
   UpdateStatusLine(&bugs[0], frame, ofp);
 
-  Image img = {.data = (Color *)g_worldCell,
+  Image img = {.data = g_worldCell->color,
                .width = WORLD_WIDTH,
                .height = WORLD_HEIGHT,
                .mipmaps = 1,
@@ -190,34 +263,35 @@ int main(int argc, char **argv) {
       u_int64_t screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
       g_worldCell->color[screen_pos] = BLACK;
       g_worldCell->bug[screen_pos] = NULL;
-      g_worldCell->type[screen_pos] = 0;
+      g_worldCell->type[screen_pos] = EMPTY;
 
       screen_pos = moveBug(&bugs[i]);
       // moving could mean the death of the bug
       if (!bugs[i].isAlive)
         continue;
 
-      if (g_worldCell->type[screen_pos] == 1) {
+      if (g_worldCell->type[screen_pos] == FOOD) {
         bugs[i].health += bugs[i].health > 245 ? 255 - bugs[i].health : 10;
-      } else if (g_worldCell->type[screen_pos] == 2) {
+      } else if (g_worldCell->type[screen_pos] == POISON) {
         bugs[i].health -= bugs[i].health < 10 ? bugs[i].health : 10;
         if (bugs[i].health == 0) {
-          g_worldCell->color[screen_pos] = BLACK;
-          bugs[i].isAlive = 0;
-          g_worldCell->bug[screen_pos] = NULL;
-          g_worldCell->type[screen_pos] = 0;
+          bugDeath(&bugs[i], screen_pos);
           continue;
+        }
+      } else if (g_worldCell->type[screen_pos] == BUG) {
+        if (bugsAreSameSex(g_worldCell->bug[screen_pos], &bugs[i])) {
+          birthABug(&bugs[i], screen_pos);
         }
       }
       recalculateDNA(&bugs[i]);
       if (bugs[i].isAlive) {
         // set screen pixel to bug color
-        g_worldCell->color[i].r = bugs[i].dna >> 24 & 0xff;
-        g_worldCell->color[i].g = bugs[i].dna >> 16 & 0xff;
-        g_worldCell->color[i].b = bugs[i].dna >> 8 & 0xff;
-        g_worldCell->color[i].a = 255;
-        g_worldCell->type[i] = 3;
-        g_worldCell->bug[i] = &bugs[i];
+        g_worldCell->color[screen_pos].r = bugs[i].dna >> 24 & 0xff;
+        g_worldCell->color[screen_pos].g = bugs[i].dna >> 16 & 0xff;
+        g_worldCell->color[screen_pos].b = bugs[i].dna >> 8 & 0xff;
+        g_worldCell->color[screen_pos].a = 255;
+        g_worldCell->type[screen_pos] = BUG;
+        g_worldCell->bug[screen_pos] = &bugs[i];
       }
     }
 
