@@ -11,14 +11,14 @@
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 624
 
-#define INIT_BUG_PROB 0.03
+#define INIT_BUG_PROB 0.001
 #define INIT_FOOD_PROB 0.5
-#define REGENERATE_FOOD_RATE 0.0005
+#define REGENERATE_FOOD_RATE 0.0010
 #define INIT_POISON_PROB 0.00
 #define FOOD_HEALTH 10
 #define POISON_HEALTH 10
 #define MATING_COST 10
-#define MOVE_COST_PROB 0.1
+#define MOVE_COST_PROB 1.0
 
 Color FOOD_COLOR = {255, 255, 0, 255};
 
@@ -159,19 +159,39 @@ int bugsAreSameSex(Bug *bug1, Bug *bug2) {
   return bug1->sex == bug2->sex ? 1 : 0;
 }
 
+int getDeadBugIndex(Bug *bugs) {
+  printf("looking for dead bug among %lu bugs\n", g_numBugs);
+  for (int i = 0; i < g_numBugs; ++i) {
+    if (!bugs[i].isAlive) {
+      printf("Found dead bug at index %d\n", i);
+      return i;
+    }
+  }
+  printf("Error: No dead bugs found\n");
+  return -1;
+}
+
 /// @brief Create a new bug using the DNA of the parents
 Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
   if (g_numBugs >= WORLD_WIDTH * WORLD_HEIGHT) {
     printf("Error: Too many bugs\n");
+    --g_numBugs;
     return bugs;
   }
-  bugs = realloc(bugs, (g_numBugs + 1) * sizeof(Bug));
-  if (bugs == NULL) {
-    perror("Error: Unable to allocate memory for bugs\n");
-    exit(1);
-  }
+  int baby_idx = getDeadBugIndex(bugs);
+  if (baby_idx == -1) {
+    bugs = realloc(bugs, (g_numBugs + 1) * sizeof(Bug));
+    if (bugs == NULL) {
+      perror("Error: Unable to allocate memory for bugs\n");
+      exit(1);
+    }
+    baby_idx = g_numBugs;
+  } else
+    --g_numBugs;
+  // int baby_idx = g_numBugs;
+  //   }
 
-  Bug *baby = &bugs[g_numBugs];
+  Bug *baby = &bugs[baby_idx];
   Bug *mom = &bugs[mom_idx];
   Bug *dad = &bugs[dad_idx];
   // DNA is a combination of the parents' DNA
@@ -180,6 +200,7 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
   baby->speed = (mom->speed + dad->speed) / 2;
   baby->drive = (mom->drive + dad->drive) / 2;
   baby->sex = rand() % 2;
+  baby->isAlive = 1;
   // perform  a mutation
   // 1 in 100 chance of a mutation
   if (rand() % 100 == 0) {
@@ -187,7 +208,7 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
     baby->dna ^= 1 << bit;
   }
 
-  for (int i = screen_pos + 1; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+  for (int i = screen_pos - 1; i > 0; --i) {
     if (g_worldCell->type[i] == EMPTY) {
       baby->x = i % WORLD_WIDTH;
       baby->y = i / WORLD_WIDTH;
@@ -195,7 +216,7 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
     }
   }
   if (baby->x == 0 && baby->y == 0) {
-    for (int i = screen_pos - 1; i > 0; --i) {
+    for (int i = screen_pos + 1; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
       if (g_worldCell->type[i] == EMPTY) {
         baby->x = i % WORLD_WIDTH;
         baby->y = i / WORLD_WIDTH;
@@ -216,8 +237,8 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
     bugDeath(dad, screen_pos);
   } else
     dad->health -= MATING_COST;
-  // printf("Mom:(%d,%d) %u Dad: (%d,%d) %u Baby:(%d,%d) %u\n", mom->x, mom->y,
-  //        mom->dna, dad->x, dad->y, dad->dna, baby->x, baby->y, baby->dna);
+  printf("Mom:(%d,%d) %u Dad: (%d,%d) %u Baby:(%d,%d) %u\n", mom->x, mom->y,
+         mom->dna, dad->x, dad->y, dad->dna, baby->x, baby->y, baby->dna);
   return bugs;
 }
 
@@ -250,7 +271,7 @@ int main(int argc, char **argv) {
 
   printf("Initializing world\n");
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
-    if (rand() % 100 < INIT_BUG_PROB * 100) {
+    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
       bugs = ImmaculateBirthABug(i, bugs);
     } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
       g_worldCell->type[i] = FOOD;
@@ -300,7 +321,8 @@ int main(int argc, char **argv) {
           continue;
         }
       } else if (g_worldCell->type[screen_pos] == BUG) {
-        if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]], &bugs[i])) {
+        if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]], &bugs[i]) &&
+            bugs[i].drive > rand() % 16) {
           bugs =
               birthABug(bugs, i, g_worldCell->bug_idx[screen_pos], screen_pos);
           ++births;
