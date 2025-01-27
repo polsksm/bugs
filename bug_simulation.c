@@ -12,24 +12,27 @@
 #define SCREEN_HEIGHT 624
 
 #define INIT_BUG_PROB 0.001
-#define INIT_FOOD_PROB 0.9
+#define INIT_FOOD_PROB 0.2
 #define INIT_POISON_PROB 0.01
 
 #define REGENERATE_FOOD_RATE 0.0005
-#define MUTATION_RATE 0.10
+#define MUTATION_RATE 0.20
 
 #define FOOD_HEALTH 10
 #define MOVE_COST_PROB 1.0
 #define POISON_COST 10
 #define MOVE_COST 1
 #define MATING_COST 10
-#define FIGHTING_COST 5
+#define MIN_MATING_AGE 5
+#define FIGHTING_COST 20
 
 Color FOOD_COLOR = {255, 255, 0, 255};
+#define FOOD_OPACITY 0
 
 typedef struct Bug {
   int x, y;             // Position
   int isAlive;          // 0|1
+  int age;              // how many frames they've been alive for
   unsigned char health; // 0 - 255
   unsigned char sex;    // 0|1
   unsigned char vision; // 0-4 distance the bug can see
@@ -38,7 +41,9 @@ typedef struct Bug {
   unsigned char aggr;   // 0 - 16 - how much the bug wants to fight
   uint32_t dna;         // this doubles for the bug's color
 } Bug;
+
 typedef enum { EMPTY = 0, FOOD = 1, POISON = 2, BUG = 3 } WORLDCELL_TYPE;
+
 struct WorldCell {
   WORLDCELL_TYPE type[WORLD_WIDTH * WORLD_HEIGHT];
   Color color[WORLD_WIDTH * WORLD_HEIGHT];
@@ -85,6 +90,7 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   printf("Bug %lu: x: %d y: %d\n", g_numBugs, bugs[g_numBugs].x,
          bugs[g_numBugs].y);
   bugs[g_numBugs].isAlive = 1;
+  bugs[g_numBugs].age = 0;
   bugs[g_numBugs].sex = rand() % 2;
   bugs[g_numBugs].health = 255;
   bugs[g_numBugs].vision = rand() % 5;
@@ -132,7 +138,7 @@ void UpdateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
       aggr += bugs[i].aggr;
     }
   }
-  sprintf(status_line, "BUGS: %u\tFrame: %lu", alive, frame);
+  sprintf(status_line, "BUGS: %6u\tFrame: %8lu", alive, frame);
   DrawText(status_line, 10, SCREEN_HEIGHT - 23, 20, WHITE);
   if (ofp)
     fprintf(ofp, "%u\t%lu\t%d\t%d\t%d\n", alive, frame, health / alive,
@@ -168,6 +174,7 @@ void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos) {
   }
   g_worldCell->color[screen_pos] = BLACK;
   bugs[idx].isAlive = 0;
+  bugs[idx].age = 0;
   g_worldCell->bug_idx[screen_pos] = -1;
   g_worldCell->type[screen_pos] = EMPTY;
   ++g_deaths;
@@ -190,12 +197,12 @@ int getDeadBugIndex(Bug *bugs) {
 }
 
 /// @brief Create a new bug using the DNA of the parents
-Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
+Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t mom_pos,
+               u_int64_t dad_pos) {
   int baby_idx = getDeadBugIndex(bugs);
 
   if (baby_idx == -1 && g_numBugs >= WORLD_WIDTH * WORLD_HEIGHT) {
     printf("Error: Too many bugs\n");
-    --g_numBugs;
     return bugs;
   }
   if (baby_idx == -1) {
@@ -205,10 +212,8 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
       exit(1);
     }
     baby_idx = g_numBugs;
-  } else
-    --g_numBugs;
-  // int baby_idx = g_numBugs;
-  //   }
+    ++g_numBugs;
+  }
 
   Bug *baby = &bugs[baby_idx];
   Bug *mom = &bugs[mom_idx];
@@ -221,13 +226,15 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
   baby->aggr = (mom->aggr + dad->aggr) / 2;
   baby->sex = rand() % 2;
   baby->isAlive = 1;
+  baby->age = 0;
   // perform  a mutation
   if (rand() % 100 >= MUTATION_RATE * 100) {
     int bit = rand() % 32;
     baby->dna ^= 1 << bit;
   }
 
-  for (int i = screen_pos - 1; i > 0; --i) {
+  // find a place to put the baby
+  for (int i = mom_pos - 1; i > 0; --i) {
     if (g_worldCell->type[i] == EMPTY) {
       baby->x = i % WORLD_WIDTH;
       baby->y = i / WORLD_WIDTH;
@@ -235,7 +242,7 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
     }
   }
   if (baby->x == 0 && baby->y == 0) {
-    for (int i = screen_pos + 1; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+    for (int i = mom_pos + 1; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
       if (g_worldCell->type[i] == EMPTY) {
         baby->x = i % WORLD_WIDTH;
         baby->y = i / WORLD_WIDTH;
@@ -243,46 +250,78 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t screen_pos) {
       }
     }
   }
+  if (baby->x == 0 && baby->y == 0) {
+    printf("Error: No space to put baby\n");
+    bugs[baby_idx].isAlive = 0;
+  }
 
   recalculateDNA(baby);
 
   if (mom->health <= MATING_COST) {
     mom->health = 0;
-    bugDeath(bugs, mom_idx, screen_pos);
   } else
     mom->health -= MATING_COST;
   if (dad->health <= MATING_COST) {
     dad->health = 0;
-    bugDeath(bugs, dad_idx, screen_pos);
   } else
     dad->health -= MATING_COST;
-  // printf("Mom:(%d,%d) %u Dad: (%d,%d) %u Baby:(%d,%d) %u\n", mom->x, mom->y,
-  //        mom->dna, dad->x, dad->y, dad->dna, baby->x, baby->y, baby->dna);
   ++g_births;
+
   return bugs;
 }
 
+//-------------------------------------------------------------
+// bugFight - fight to the death
+// ----------------------------------------------------------
 void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
-  int new_health = (bugs[idx1].health + bugs[idx2].health) / 2;
+
+  int new_health = (bugs[idx1].health + bugs[idx2].health) - FIGHTING_COST;
+
   if (bugs[idx1].health > bugs[idx2].health) {
+    // bug 1 wins
     bugs[idx2].health = 0;
     if (new_health > 255)
       new_health = 255;
-    if (new_health <= 0)
+    else if (new_health <= 0)
       new_health = 0;
     bugs[idx1].health = new_health;
   } else if (bugs[idx1].health < bugs[idx2].health) {
+    // bug 2 wins
     bugs[idx1].health = 0;
     if (new_health > 255)
       new_health = 255;
-    if (new_health <= 0)
+    else if (new_health <= 0)
       new_health = 0;
     bugs[idx2].health = new_health;
   } else {
+    // both bugs die
+    printf("Both bugs die %d:%d:%u v %d:%d:%u\n", idx1, bugs[idx1].health,
+           bugs[idx1].dna, idx2, bugs[idx2].health, bugs[idx2].dna);
     bugs[idx1].health = 0;
     bugs[idx2].health = 0;
   }
   ++g_fights;
+}
+
+Bug *InitializeWorld(Bug *bugs) {
+  printf("Initializing world\n");
+  for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
+      bugs = ImmaculateBirthABug(i, bugs);
+    } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
+      g_worldCell->type[i] = FOOD;
+      g_worldCell->color[i] = FOOD_COLOR;
+      g_worldCell->color[i].a = FOOD_OPACITY;
+    } else if (rand() % 100 < INIT_POISON_PROB * 100) {
+      g_worldCell->type[i] = POISON;
+      g_worldCell->color[i] = RED;
+    } else {
+      g_worldCell->type[i] = EMPTY;
+      g_worldCell->color[i] = BLACK;
+    }
+  }
+
+  return bugs;
 }
 
 int main(int argc, char **argv) {
@@ -312,22 +351,7 @@ int main(int argc, char **argv) {
   // Create bugs
   Bug *bugs = NULL;
 
-  printf("Initializing world\n");
-  for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
-    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
-      bugs = ImmaculateBirthABug(i, bugs);
-    } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
-      g_worldCell->type[i] = FOOD;
-      g_worldCell->color[i] = FOOD_COLOR;
-      g_worldCell->color[i].a = 128;
-    } else if (rand() % 100 < INIT_POISON_PROB * 100) {
-      g_worldCell->type[i] = POISON;
-      g_worldCell->color[i] = RED;
-    } else {
-      g_worldCell->type[i] = EMPTY;
-      g_worldCell->color[i] = BLACK;
-    }
-  }
+  bugs = InitializeWorld(bugs);
 
   u_int64_t frame = 0;
   UpdateStatusLine(&bugs[0], frame, ofp);
@@ -355,23 +379,31 @@ int main(int argc, char **argv) {
         bugDeath(bugs, i, screen_pos);
         continue;
       }
-
+      // the bug is in a new position (but not yet stored in the world)
+      // see what they landed on and act accordingly
       if (g_worldCell->type[screen_pos] == FOOD) {
-        bugs[i].health += bugs[i].health > 245 ? 255 - bugs[i].health : 10;
+        bugs[i].health += bugs[i].health > 255 - FOOD_HEALTH
+                              ? 255 - bugs[i].health
+                              : FOOD_HEALTH;
       } else if (g_worldCell->type[screen_pos] == POISON) {
-        bugs[i].health -= bugs[i].health < 10 ? bugs[i].health : 10;
+        bugs[i].health -=
+            bugs[i].health < POISON_COST ? bugs[i].health : POISON_COST;
         if (bugs[i].health == 0) {
           bugDeath(bugs, i, screen_pos);
           continue;
         }
       } else if (g_worldCell->type[screen_pos] == BUG) {
         if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]], &bugs[i])) {
-          if (bugs[i].drive > rand() % 16) {
+          if (bugs[i].drive > rand() % 16 && bugs[i].health > MATING_COST &&
+              bugs[g_worldCell->bug_idx[screen_pos]].health > MATING_COST &&
+              bugs[i].age >= MIN_MATING_AGE &&
+              bugs[g_worldCell->bug_idx[screen_pos]].age >= MIN_MATING_AGE) {
             bugs = birthABug(bugs, i, g_worldCell->bug_idx[screen_pos],
-                             screen_pos);
-            ++g_numBugs;
+                             screen_pos, old_screen_pos);
           }
-        } else if (bugs[i].aggr > rand() % 16) {
+        } else if (bugs[i].aggr > rand() % 16 &&
+                   bugs[i].health >
+                       bugs[g_worldCell->bug_idx[screen_pos]].health) {
           bugFight(bugs, i, g_worldCell->bug_idx[screen_pos], screen_pos);
           if (bugs[g_worldCell->bug_idx[screen_pos]].health == 0) {
             bugDeath(bugs, g_worldCell->bug_idx[screen_pos], screen_pos);
@@ -391,6 +423,7 @@ int main(int argc, char **argv) {
         g_worldCell->color[screen_pos].a = 255;
         g_worldCell->type[screen_pos] = BUG;
         g_worldCell->bug_idx[screen_pos] = i;
+        bugs[i].age++;
       }
     }
 
@@ -416,7 +449,7 @@ int main(int argc, char **argv) {
           rand() % 10000 < REGENERATE_FOOD_RATE * 10000) {
         g_worldCell->type[i] = FOOD;
         g_worldCell->color[i] = FOOD_COLOR;
-        g_worldCell->color[i].a = 128;
+        g_worldCell->color[i].a = FOOD_OPACITY;
       }
     }
   }
