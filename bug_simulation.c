@@ -17,7 +17,7 @@
 #define INIT_FOOD_PROB 0.2
 #define INIT_POISON_PROB 0.01
 
-#define REGENERATE_FOOD_RATE 0.0009
+#define REGENERATE_FOOD_RATE 0.0026
 #define MUTATION_RATE 0.20
 
 #define FOOD_HEALTH 10
@@ -27,7 +27,7 @@
 #define MATING_COST 10
 #define MIN_MATING_AGE 10
 #define MIN_FIGHTING_AGE 15
-#define FIGHTING_COST 40
+#define FIGHTING_COST 100
 int PAUSE = 0;
 
 Color FOOD_COLOR = {255, 255, 0, 255};
@@ -59,15 +59,15 @@ u_int32_t g_births = 0, g_fights = 0;
 u_int32_t g_deaths = 0;
 
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos);
-void DisplayBugDNA(Bug *bug);
-Bug *ImmaculateBirthABug(int i, Bug *bugs);
-void recalculateDNA(Bug *bug);
-void UpdateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
+void displayBugDNA(Bug *bug);
+Bug *immaculateBirthABug(int i, Bug *bugs);
+void calculateDNA(Bug *bug);
+void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
 u_int64_t moveBug(Bug *bug);
 int bugsAreSameSex(Bug *bug1, Bug *bug2);
 // int birthABug(Bug *bug, u_int64_t screen_pos);
 
-void DisplayBugDNA(Bug *bug) {
+void displayBugDNA(Bug *bug) {
   int i;
 
   for (i = 31; i >= 0; i--) {
@@ -75,15 +75,15 @@ void DisplayBugDNA(Bug *bug) {
     if (i % 8 == 0)
       printf(" ");
   }
-  printf("\nHealth: (%u) -> %u\n", bug->health, bug->dna >> 24 & 0xff);
-  printf("Sex: (%u) %u\n", bug->sex, bug->dna >> 23 & 0x01);
-  printf("Vision:(%u) %u\n", bug->vision, bug->dna >> 21 & 0x03);
-  printf("Speed:(%u) %u\n", bug->speed, bug->dna >> 19 & 0x03);
-  printf("Drive:(%u) %u\n", bug->drive, bug->dna >> 15 & 0x0f);
-  printf("Aggr:(%u) %u\n", bug->aggr, bug->dna >> 11 & 0x0f);
+  printf("\nHealth: (%u) -> %u\n", bug->health, bug->dna & 0xff);
+  printf("Sex: (%u) %u\n", bug->sex, bug->dna >> 31 & 0x01);
+  printf("Vision:(%u) %u\n", bug->vision, bug->dna >> 29 & 0x03);
+  printf("Speed:(%u) %u\n", bug->speed, bug->dna >> 27 & 0x03);
+  printf("Drive:(%u) %u\n", bug->drive, bug->dna >> 23 & 0x0f);
+  printf("Aggr:(%u) %u\n", bug->aggr, bug->dna >> 19 & 0x0f);
 }
 
-Bug *ImmaculateBirthABug(int i, Bug *bugs) {
+Bug *immaculateBirthABug(int i, Bug *bugs) {
   bugs = realloc(bugs, (g_numBugs + 1) * sizeof(Bug));
   if (bugs == NULL) {
     perror("Error: Unable to allocate memory for bugs\n");
@@ -101,33 +101,31 @@ Bug *ImmaculateBirthABug(int i, Bug *bugs) {
   bugs[g_numBugs].speed = rand() % 5;
   bugs[g_numBugs].drive = rand() % 17;
   bugs[g_numBugs].aggr = rand() % 17;
-  // dna is the health/sex/vision etc combined into one number
-  bugs[g_numBugs].dna = bugs[g_numBugs].health << 24;
-  bugs[g_numBugs].dna |= bugs[g_numBugs].sex << 23;
-  bugs[g_numBugs].dna |= bugs[g_numBugs].vision << 21;
-  bugs[g_numBugs].dna |= bugs[g_numBugs].speed << 19;
-  bugs[g_numBugs].dna |= bugs[g_numBugs].drive << 15;
-  bugs[g_numBugs].dna |= bugs[g_numBugs].aggr << 11;
-  // DisplayBugDNA(&bugs[g_numBugs]);
+  calculateDNA(&bugs[g_numBugs]);
+  displayBugDNA(&bugs[g_numBugs]);
   g_worldCell->color[i].r = bugs[g_numBugs].dna >> 24 & 0xff;
   g_worldCell->color[i].g = bugs[g_numBugs].dna >> 16 & 0xff;
   g_worldCell->color[i].b = bugs[g_numBugs].dna >> 8 & 0xff;
-  g_worldCell->color[i].a = 255;
+  // health of the bug is also the alpha channel
+  g_worldCell->color[i].a = bugs[g_numBugs].dna & 0xff;
   g_worldCell->type[i] = BUG;
   g_worldCell->bug_idx[i] = g_numBugs;
   ++g_numBugs;
   return bugs;
 }
 
-void recalculateDNA(Bug *bug) {
-  bug->dna = bug->health << 24;
-  bug->dna |= bug->sex << 23;
-  bug->dna |= bug->vision << 21;
-  bug->dna |= bug->speed << 19;
-  bug->dna |= bug->drive << 15;
-  bug->dna |= bug->aggr << 11;
+void calculateDNA(Bug *bug) {
+  u_int16_t unused = 0xff;
+  bug->dna = 0;
+  bug->dna |= bug->sex << 31;
+  bug->dna |= bug->vision << 29;
+  bug->dna |= bug->speed << 27;
+  bug->dna |= bug->drive << 23;
+  bug->dna |= bug->aggr << 19;
+  bug->dna |= unused << 11;
+  bug->dna |= bug->health;
 }
-void UpdateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
+void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
   char status_line[100];
   u_int32_t alive = 0;
   u_int32_t health = 0;
@@ -259,7 +257,7 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t mom_pos,
     bugs[baby_idx].isAlive = 0;
   }
 
-  recalculateDNA(baby);
+  calculateDNA(baby);
 
   if (mom->health <= MATING_COST) {
     mom->health = 0;
@@ -296,11 +294,11 @@ void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
   ++g_fights;
 }
 
-Bug *InitializeWorld(Bug *bugs) {
+Bug *initializeWorld(Bug *bugs) {
   printf("Initializing world\n");
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
     if (rand() % 1000 < INIT_BUG_PROB * 1000) {
-      bugs = ImmaculateBirthABug(i, bugs);
+      bugs = immaculateBirthABug(i, bugs);
     } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
       g_worldCell->type[i] = FOOD;
       g_worldCell->color[i] = FOOD_COLOR;
@@ -344,10 +342,10 @@ int main(int argc, char **argv) {
   // Create bugs
   Bug *bugs = NULL;
 
-  bugs = InitializeWorld(bugs);
+  bugs = initializeWorld(bugs);
 
   u_int64_t frame = 0;
-  UpdateStatusLine(&bugs[0], frame, ofp);
+  updateStatusLine(&bugs[0], frame, ofp);
 
   Image img = {.data = g_worldCell->color,
                .width = WORLD_WIDTH,
@@ -416,13 +414,13 @@ int main(int argc, char **argv) {
             }
           }
         }
-        recalculateDNA(&bugs[i]);
+        calculateDNA(&bugs[i]);
         if (bugs[i].isAlive) {
           // set screen pixel to bug color
           g_worldCell->color[screen_pos].r = bugs[i].dna >> 24 & 0xff;
           g_worldCell->color[screen_pos].g = bugs[i].dna >> 16 & 0xff;
           g_worldCell->color[screen_pos].b = bugs[i].dna >> 8 & 0xff;
-          g_worldCell->color[screen_pos].a = 255;
+          g_worldCell->color[screen_pos].a = bugs[i].dna & 0xff;
           g_worldCell->type[screen_pos] = BUG;
           g_worldCell->bug_idx[screen_pos] = i;
           bugs[i].age++;
@@ -444,7 +442,7 @@ int main(int argc, char **argv) {
           g_worldCell->color[i].a = FOOD_OPACITY;
         }
       }
-      UpdateStatusLine(bugs, frame, ofp);
+      updateStatusLine(bugs, frame, ofp);
       ++frame;
     }
     // Draw frame
