@@ -1,21 +1,23 @@
 // compiled with: gcc
 // -o bug_simulation bug_simulation.c -g -lraylib -lm -ldl -lpthread -lGL -lrt
 #include "raylib.h"
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 #define WORLD_WIDTH 800
 #define WORLD_HEIGHT 600
-#define SCREEN_WIDTH 800
-#define SCREEN_HEIGHT 624
+#define SCREEN_WIDTH 1820
+#define SCREEN_HEIGHT 980
 
 #define INIT_BUG_PROB 0.001
 #define INIT_FOOD_PROB 0.2
 #define INIT_POISON_PROB 0.01
 
-#define REGENERATE_FOOD_RATE 0.0005
+#define REGENERATE_FOOD_RATE 0.0009
 #define MUTATION_RATE 0.20
 
 #define FOOD_HEALTH 10
@@ -23,11 +25,13 @@
 #define POISON_COST 10
 #define MOVE_COST 1
 #define MATING_COST 10
-#define MIN_MATING_AGE 5
-#define FIGHTING_COST 20
+#define MIN_MATING_AGE 10
+#define MIN_FIGHTING_AGE 15
+#define FIGHTING_COST 40
+int PAUSE = 0;
 
 Color FOOD_COLOR = {255, 255, 0, 255};
-#define FOOD_OPACITY 0
+#define FOOD_OPACITY 100
 
 typedef struct Bug {
   int x, y;             // Position
@@ -272,34 +276,23 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t mom_pos,
 
 //-------------------------------------------------------------
 // bugFight - fight to the death
+// ** updated - bug1 always wins - it can see bug2's health before the fight
 // ----------------------------------------------------------
 void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
 
   int new_health = (bugs[idx1].health + bugs[idx2].health) - FIGHTING_COST;
+  /*
+  printf("bug2[%d](%d,%d) h:%d age:%d\tbug1[%d](%d,%d) h:%d age:%d\n", idx2,
+         bugs[idx2].x, bugs[idx2].y, bugs[idx2].health, bugs[idx2].age, idx1,
+         bugs[idx1].x, bugs[idx1].y, bugs[idx1].health, bugs[idx1].age);
+         */
 
-  if (bugs[idx1].health > bugs[idx2].health) {
-    // bug 1 wins
-    bugs[idx2].health = 0;
-    if (new_health > 255)
-      new_health = 255;
-    else if (new_health <= 0)
-      new_health = 0;
-    bugs[idx1].health = new_health;
-  } else if (bugs[idx1].health < bugs[idx2].health) {
-    // bug 2 wins
-    bugs[idx1].health = 0;
-    if (new_health > 255)
-      new_health = 255;
-    else if (new_health <= 0)
-      new_health = 0;
-    bugs[idx2].health = new_health;
-  } else {
-    // both bugs die
-    printf("Both bugs die %d:%d:%u v %d:%d:%u\n", idx1, bugs[idx1].health,
-           bugs[idx1].dna, idx2, bugs[idx2].health, bugs[idx2].dna);
-    bugs[idx1].health = 0;
-    bugs[idx2].health = 0;
-  }
+  bugs[idx2].health = 0;
+  if (new_health > 255)
+    new_health = 255;
+  else if (new_health <= 0)
+    new_health = 0;
+  bugs[idx1].health = new_health;
   ++g_fights;
 }
 
@@ -363,95 +356,103 @@ int main(int argc, char **argv) {
                .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
   Texture2D texture = LoadTextureFromImage(img);
 
+  // set STDIN to non-blocking
   // Main game loop
   while (!WindowShouldClose()) {
-    for (int i = 0; i < g_numBugs; ++i) {
-      if (!bugs[i].isAlive)
-        continue;
-      u_int64_t screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
-      u_int64_t old_screen_pos = screen_pos;
-      g_worldCell->color[screen_pos] = BLACK;
-      g_worldCell->bug_idx[screen_pos] = -1;
-      g_worldCell->type[screen_pos] = EMPTY;
-      screen_pos = moveBug(&bugs[i]);
-      // moving could mean the death of the bug
-      if (bugs[i].health == 0) {
-        bugDeath(bugs, i, screen_pos);
-        continue;
-      }
-      // the bug is in a new position (but not yet stored in the world)
-      // see what they landed on and act accordingly
-      if (g_worldCell->type[screen_pos] == FOOD) {
-        bugs[i].health += bugs[i].health > 255 - FOOD_HEALTH
-                              ? 255 - bugs[i].health
-                              : FOOD_HEALTH;
-      } else if (g_worldCell->type[screen_pos] == POISON) {
-        bugs[i].health -=
-            bugs[i].health < POISON_COST ? bugs[i].health : POISON_COST;
+    if (IsKeyPressed(KEY_SPACE)) {
+      PAUSE = !PAUSE;
+      printf("PAUSE: %d\n", PAUSE);
+    }
+    if (!PAUSE) {
+      for (int i = 0; i < g_numBugs; ++i) {
+        if (!bugs[i].isAlive)
+          continue;
+
+        u_int64_t screen_pos = bugs[i].y * WORLD_WIDTH + bugs[i].x;
+        u_int64_t old_screen_pos = screen_pos;
+        g_worldCell->color[screen_pos] = BLACK;
+        g_worldCell->bug_idx[screen_pos] = -1;
+        g_worldCell->type[screen_pos] = EMPTY;
+        screen_pos = moveBug(&bugs[i]);
+        // moving could mean the death of the bug
         if (bugs[i].health == 0) {
           bugDeath(bugs, i, screen_pos);
           continue;
         }
-      } else if (g_worldCell->type[screen_pos] == BUG) {
-        if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]], &bugs[i])) {
-          if (bugs[i].drive > rand() % 16 && bugs[i].health > MATING_COST &&
-              bugs[g_worldCell->bug_idx[screen_pos]].health > MATING_COST &&
-              bugs[i].age >= MIN_MATING_AGE &&
-              bugs[g_worldCell->bug_idx[screen_pos]].age >= MIN_MATING_AGE) {
-            bugs = birthABug(bugs, i, g_worldCell->bug_idx[screen_pos],
-                             screen_pos, old_screen_pos);
-          }
-        } else if (bugs[i].aggr > rand() % 16 &&
-                   bugs[i].health >
-                       bugs[g_worldCell->bug_idx[screen_pos]].health) {
-          bugFight(bugs, i, g_worldCell->bug_idx[screen_pos], screen_pos);
-          if (bugs[g_worldCell->bug_idx[screen_pos]].health == 0) {
-            bugDeath(bugs, g_worldCell->bug_idx[screen_pos], screen_pos);
-          }
+        // the bug is in a new position (but not yet stored in the world)
+        // see what they landed on and act accordingly
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          bugs[i].health += bugs[i].health > 255 - FOOD_HEALTH
+                                ? 255 - bugs[i].health
+                                : FOOD_HEALTH;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          bugs[i].health -=
+              bugs[i].health < POISON_COST ? bugs[i].health : POISON_COST;
           if (bugs[i].health == 0) {
             bugDeath(bugs, i, screen_pos);
             continue;
           }
+        } else if (g_worldCell->type[screen_pos] == BUG) {
+          if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]],
+                             &bugs[i])) {
+            if (bugs[i].drive > rand() % 16 && bugs[i].health > MATING_COST &&
+                bugs[g_worldCell->bug_idx[screen_pos]].health > MATING_COST &&
+                bugs[i].age >= MIN_MATING_AGE &&
+                bugs[g_worldCell->bug_idx[screen_pos]].age >= MIN_MATING_AGE) {
+              bugs = birthABug(bugs, i, g_worldCell->bug_idx[screen_pos],
+                               screen_pos, old_screen_pos);
+            }
+          } else if (bugs[i].aggr > rand() % 16 &&
+                     bugs[i].age >= MIN_FIGHTING_AGE &&
+                     bugs[i].health >
+                         bugs[g_worldCell->bug_idx[screen_pos]].health) {
+            bugFight(bugs, i, g_worldCell->bug_idx[screen_pos], screen_pos);
+            if (bugs[g_worldCell->bug_idx[screen_pos]].health == 0) {
+              bugDeath(bugs, g_worldCell->bug_idx[screen_pos], screen_pos);
+            }
+            if (bugs[i].health == 0) {
+              bugDeath(bugs, i, screen_pos);
+              continue;
+            }
+          }
+        }
+        recalculateDNA(&bugs[i]);
+        if (bugs[i].isAlive) {
+          // set screen pixel to bug color
+          g_worldCell->color[screen_pos].r = bugs[i].dna >> 24 & 0xff;
+          g_worldCell->color[screen_pos].g = bugs[i].dna >> 16 & 0xff;
+          g_worldCell->color[screen_pos].b = bugs[i].dna >> 8 & 0xff;
+          g_worldCell->color[screen_pos].a = 255;
+          g_worldCell->type[screen_pos] = BUG;
+          g_worldCell->bug_idx[screen_pos] = i;
+          bugs[i].age++;
         }
       }
-      recalculateDNA(&bugs[i]);
-      if (bugs[i].isAlive) {
-        // set screen pixel to bug color
-        g_worldCell->color[screen_pos].r = bugs[i].dna >> 24 & 0xff;
-        g_worldCell->color[screen_pos].g = bugs[i].dna >> 16 & 0xff;
-        g_worldCell->color[screen_pos].b = bugs[i].dna >> 8 & 0xff;
-        g_worldCell->color[screen_pos].a = 255;
-        g_worldCell->type[screen_pos] = BUG;
-        g_worldCell->bug_idx[screen_pos] = i;
-        bugs[i].age++;
+      if (frame % 100 == 0) {
+        printf("Frame: %lu Fights:%d Births:%d Deaths:%d  PopX:%d\n", frame,
+               g_fights, g_births, g_deaths, g_births - g_deaths);
+        g_births = 0;
+        g_fights = 0;
+        g_deaths = 0;
       }
+      // regenerate food
+      for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+        if (g_worldCell->type[i] == EMPTY &&
+            rand() % 10000 < REGENERATE_FOOD_RATE * 10000) {
+          g_worldCell->type[i] = FOOD;
+          g_worldCell->color[i] = FOOD_COLOR;
+          g_worldCell->color[i].a = FOOD_OPACITY;
+        }
+      }
+      UpdateStatusLine(bugs, frame, ofp);
+      ++frame;
     }
-
     // Draw frame
     BeginDrawing();
     ClearBackground(BLACK);
-    UpdateStatusLine(bugs, frame, ofp);
     UpdateTexture(texture, g_worldCell->color);
     DrawTexture(texture, 0, 0, WHITE);
     EndDrawing();
-    ++frame;
-
-    if (frame % 100 == 0) {
-      printf("Frame: %lu Fights:%d Births:%d Deaths:%d  PopX:%d\n", frame,
-             g_fights, g_births, g_deaths, g_births - g_deaths);
-      g_births = 0;
-      g_fights = 0;
-      g_deaths = 0;
-    }
-    // regenerate food
-    for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
-      if (g_worldCell->type[i] == EMPTY &&
-          rand() % 10000 < REGENERATE_FOOD_RATE * 10000) {
-        g_worldCell->type[i] = FOOD;
-        g_worldCell->color[i] = FOOD_COLOR;
-        g_worldCell->color[i].a = FOOD_OPACITY;
-      }
-    }
   }
 
   // Deinitialize raylib
