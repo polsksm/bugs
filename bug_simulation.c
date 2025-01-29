@@ -1,7 +1,9 @@
 // compiled with: gcc
-// -o bug_simulation bug_simulation.c -g -lraylib -lm -ldl -lpthread -lGL -lrt
+// -o bug_simulation bug_simulation.c -g
+// -lraylib -lm -ldl -lpthread -lGL -lrt -lgsl
 #include "raylib.h"
 #include <fcntl.h>
+#include <gsl/gsl_rng.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,11 +15,11 @@
 #define SCREEN_WIDTH 1820
 #define SCREEN_HEIGHT 980
 
-#define INIT_BUG_PROB 0.001
+#define INIT_BUG_PROB 0.0001
 #define INIT_FOOD_PROB 0.2
 #define INIT_POISON_PROB 0.01
 
-#define REGENERATE_FOOD_RATE 0.0026
+#define REGENERATE_FOOD_RATE 0.0004
 #define MUTATION_RATE 0.20
 
 #define FOOD_HEALTH 10
@@ -58,6 +60,8 @@ u_int64_t g_numBugs = 0;
 u_int32_t g_births = 0, g_fights = 0;
 u_int32_t g_deaths = 0;
 
+gsl_rng *g_rng;
+
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos);
 void displayBugDNA(Bug *bug);
 Bug *immaculateBirthABug(int i, Bug *bugs);
@@ -95,12 +99,12 @@ Bug *immaculateBirthABug(int i, Bug *bugs) {
          bugs[g_numBugs].y);
   bugs[g_numBugs].isAlive = 1;
   bugs[g_numBugs].age = 0;
-  bugs[g_numBugs].sex = rand() % 2;
+  bugs[g_numBugs].sex = gsl_rng_get(g_rng) % 2;
   bugs[g_numBugs].health = 255;
-  bugs[g_numBugs].vision = rand() % 5;
-  bugs[g_numBugs].speed = rand() % 5;
-  bugs[g_numBugs].drive = rand() % 17;
-  bugs[g_numBugs].aggr = rand() % 17;
+  bugs[g_numBugs].vision = gsl_rng_get(g_rng) % 5;
+  bugs[g_numBugs].speed = gsl_rng_get(g_rng) % 5;
+  bugs[g_numBugs].drive = gsl_rng_get(g_rng) % 17;
+  bugs[g_numBugs].aggr = gsl_rng_get(g_rng) % 17;
   calculateDNA(&bugs[g_numBugs]);
   displayBugDNA(&bugs[g_numBugs]);
   g_worldCell->color[i].r = bugs[g_numBugs].dna >> 24 & 0xff;
@@ -149,8 +153,8 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
 
 u_int64_t moveBug(Bug *bug) {
   // Move bugs randomly
-  bug->x += (rand() % 3) - 1;
-  bug->y += (rand() % 3) - 1;
+  bug->x += (gsl_rng_get(g_rng) % 3) - 1;
+  bug->y += (gsl_rng_get(g_rng) % 3) - 1;
   // Wrap around screen
   if (bug->x < 0)
     bug->x = WORLD_WIDTH - 1;
@@ -161,7 +165,7 @@ u_int64_t moveBug(Bug *bug) {
   if (bug->y >= WORLD_HEIGHT)
     bug->y = 0;
 
-  if (rand() % 100 < MOVE_COST_PROB * 100) {
+  if (gsl_rng_get(g_rng) % 100 < MOVE_COST_PROB * 100) {
     if (bug->health <= MOVE_COST) {
       bug->health = 0;
     } else
@@ -226,12 +230,12 @@ Bug *birthABug(Bug *bugs, int dad_idx, int mom_idx, u_int64_t mom_pos,
   baby->speed = (mom->speed + dad->speed) / 2;
   baby->drive = (mom->drive + dad->drive) / 2;
   baby->aggr = (mom->aggr + dad->aggr) / 2;
-  baby->sex = rand() % 2;
+  baby->sex = gsl_rng_get(g_rng) % 2;
   baby->isAlive = 1;
   baby->age = 0;
   // perform  a mutation
-  if (rand() % 100 >= MUTATION_RATE * 100) {
-    int bit = rand() % 32;
+  if (gsl_rng_get(g_rng) % 100 >= MUTATION_RATE * 100) {
+    int bit = gsl_rng_get(g_rng) % 32;
     baby->dna ^= 1 << bit;
   }
 
@@ -297,13 +301,13 @@ void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
 Bug *initializeWorld(Bug *bugs) {
   printf("Initializing world\n");
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
-    if (rand() % 1000 < INIT_BUG_PROB * 1000) {
+    if (gsl_rng_get(g_rng) % 10000 < INIT_BUG_PROB * 10000) {
       bugs = immaculateBirthABug(i, bugs);
-    } else if (rand() % 100 < INIT_FOOD_PROB * 100) {
+    } else if (gsl_rng_get(g_rng) % 100 < INIT_FOOD_PROB * 100) {
       g_worldCell->type[i] = FOOD;
       g_worldCell->color[i] = FOOD_COLOR;
       g_worldCell->color[i].a = FOOD_OPACITY;
-    } else if (rand() % 100 < INIT_POISON_PROB * 100) {
+    } else if (gsl_rng_get(g_rng) % 100 < INIT_POISON_PROB * 100) {
       g_worldCell->type[i] = POISON;
       g_worldCell->color[i] = RED;
     } else {
@@ -320,6 +324,8 @@ int main(int argc, char **argv) {
   if (argc == 1) {
     ofp = fopen("bug_simulation.log", "w");
   }
+  g_rng = gsl_rng_alloc(gsl_rng_mt19937);
+  gsl_rng_set(g_rng, time(NULL));
 
   g_worldCell = (struct WorldCell *)malloc(sizeof(struct WorldCell));
 
@@ -337,7 +343,8 @@ int main(int argc, char **argv) {
   SetTargetFPS(120);
 
   // Initialize random number generator
-  srand(time(NULL));
+  // srand(time(NULL));
+  // srand(1234);
 
   // Create bugs
   Bug *bugs = NULL;
@@ -393,14 +400,15 @@ int main(int argc, char **argv) {
         } else if (g_worldCell->type[screen_pos] == BUG) {
           if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]],
                              &bugs[i])) {
-            if (bugs[i].drive > rand() % 16 && bugs[i].health > MATING_COST &&
+            if (bugs[i].drive > gsl_rng_get(g_rng) % 16 &&
+                bugs[i].health > MATING_COST &&
                 bugs[g_worldCell->bug_idx[screen_pos]].health > MATING_COST &&
                 bugs[i].age >= MIN_MATING_AGE &&
                 bugs[g_worldCell->bug_idx[screen_pos]].age >= MIN_MATING_AGE) {
               bugs = birthABug(bugs, i, g_worldCell->bug_idx[screen_pos],
                                screen_pos, old_screen_pos);
             }
-          } else if (bugs[i].aggr > rand() % 16 &&
+          } else if (bugs[i].aggr > gsl_rng_get(g_rng) % 16 &&
                      bugs[i].age >= MIN_FIGHTING_AGE &&
                      bugs[i].health >
                          bugs[g_worldCell->bug_idx[screen_pos]].health) {
@@ -436,7 +444,7 @@ int main(int argc, char **argv) {
       // regenerate food
       for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
         if (g_worldCell->type[i] == EMPTY &&
-            rand() % 10000 < REGENERATE_FOOD_RATE * 10000) {
+            gsl_rng_get(g_rng) % 10000 < REGENERATE_FOOD_RATE * 10000) {
           g_worldCell->type[i] = FOOD;
           g_worldCell->color[i] = FOOD_COLOR;
           g_worldCell->color[i].a = FOOD_OPACITY;
