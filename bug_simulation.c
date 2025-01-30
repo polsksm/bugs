@@ -15,16 +15,17 @@
 #define SCREEN_WIDTH 1820
 #define SCREEN_HEIGHT 980
 
-#define INIT_BUG_PROB 0.0001
-#define INIT_FOOD_PROB 0.2
-#define INIT_POISON_PROB 0.01
+#define INIT_BUG_PROB 0.0011
+#define INIT_FOOD_PROB 0.5
+#define INIT_POISON_PROB 0.001
 
-#define REGENERATE_FOOD_RATE 0.0004
-#define MUTATION_RATE 0.20
+#define REGENERATE_FOOD_RATE 0.0040
+#define REGENERATE_POISON_RATE 0.0001
+#define MUTATION_RATE 0.30
 
 #define FOOD_HEALTH 10
 #define MOVE_COST_PROB 1.0
-#define POISON_COST 10
+#define POISON_COST 200
 #define MOVE_COST 1
 #define MATING_COST 10
 #define MIN_MATING_AGE 10
@@ -32,8 +33,8 @@
 #define FIGHTING_COST 100
 int PAUSE = 0;
 
-Color FOOD_COLOR = {255, 255, 0, 255};
-#define FOOD_OPACITY 100
+Color FOOD_COLOR = {0, 255, 0, 255};
+#define FOOD_OPACITY 0
 
 typedef struct Bug {
   int x, y;             // Position
@@ -307,7 +308,7 @@ Bug *initializeWorld(Bug *bugs) {
       g_worldCell->type[i] = FOOD;
       g_worldCell->color[i] = FOOD_COLOR;
       g_worldCell->color[i].a = FOOD_OPACITY;
-    } else if (gsl_rng_get(g_rng) % 100 < INIT_POISON_PROB * 100) {
+    } else if (gsl_rng_get(g_rng) % 1000 < INIT_POISON_PROB * 1000) {
       g_worldCell->type[i] = POISON;
       g_worldCell->color[i] = RED;
     } else {
@@ -441,13 +442,18 @@ int main(int argc, char **argv) {
         g_fights = 0;
         g_deaths = 0;
       }
-      // regenerate food
+      // regenerate food and poison
       for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
-        if (g_worldCell->type[i] == EMPTY &&
-            gsl_rng_get(g_rng) % 10000 < REGENERATE_FOOD_RATE * 10000) {
-          g_worldCell->type[i] = FOOD;
-          g_worldCell->color[i] = FOOD_COLOR;
-          g_worldCell->color[i].a = FOOD_OPACITY;
+        if (g_worldCell->type[i] == EMPTY) {
+          if (gsl_rng_get(g_rng) % 10000 < REGENERATE_FOOD_RATE * 10000) {
+            g_worldCell->type[i] = FOOD;
+            g_worldCell->color[i] = FOOD_COLOR;
+            g_worldCell->color[i].a = FOOD_OPACITY;
+          } else if (gsl_rng_get(g_rng) % 10000 <
+                     REGENERATE_POISON_RATE * 10000) {
+            g_worldCell->type[i] = POISON;
+            g_worldCell->color[i] = RED;
+          }
         }
       }
       updateStatusLine(bugs, frame, ofp);
