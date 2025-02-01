@@ -1,6 +1,7 @@
 // compiled with: gcc
 // -o bug_simulation bug_simulation.c -g
 // -lraylib -lm -ldl -lpthread -lGL -lrt -lgsl
+// opengl, raylib, gsl libraries required
 #include "raylib.h"
 #include <fcntl.h>
 #include <gsl/gsl_rng.h>
@@ -25,12 +26,12 @@
 
 #define FOOD_HEALTH 10
 #define MOVE_COST_PROB 1.0
-#define POISON_COST 200
+#define POISON_COST 100
 #define MOVE_COST 1
 #define MATING_COST 10
 #define MIN_MATING_AGE 10
 #define MIN_FIGHTING_AGE 15
-#define FIGHTING_COST 100
+#define FIGHTING_COST 50
 int PAUSE = 0;
 
 Color FOOD_COLOR = {0, 255, 0, 255};
@@ -68,7 +69,7 @@ void displayBugDNA(Bug *bug);
 Bug *immaculateBirthABug(int i, Bug *bugs);
 void calculateDNA(Bug *bug);
 void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
-u_int64_t moveBug(Bug *bug);
+u_int64_t bugMove(Bug *bug);
 int bugsAreSameSex(Bug *bug1, Bug *bug2);
 // int birthABug(Bug *bug, u_int64_t screen_pos);
 
@@ -152,10 +153,33 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
             drive / alive, aggr / alive);
 }
 
-u_int64_t moveBug(Bug *bug) {
-  // Move bugs randomly
-  bug->x += (gsl_rng_get(g_rng) % 3) - 1;
-  bug->y += (gsl_rng_get(g_rng) % 3) - 1;
+u_int64_t bugMove(Bug *bug) {
+  // look around based on vision
+  // the resources left, right, up and down from the bug will determine the
+  // probability of moving in that direction
+  //
+  // Move bugs randomly if they have 0 vision
+  if (bug->vision == 0) {
+    bug->x += (gsl_rng_get(g_rng) % 3) - 1;
+    bug->y += (gsl_rng_get(g_rng) % 3) - 1;
+  } else {
+    // if the bug has 1  or greater vision it can see the resources around it
+    int left_prob = 0, up_prob = 0;
+    getMovementProbabilities(bug, &left_prob, &up_prob);
+    int x_dir = 0;
+    if (gsl_rng_get(g_rng) % 100 < left_prob) {
+      x_dir = -1;
+    } else {
+      x_dir = 1;
+    }
+    int y_dir = 0;
+    if (gsl_rng_get(g_rng) % 100 < up_prob) {
+      y_dir = -1;
+    } else {
+      y_dir = 1;
+    }
+  }
+
   // Wrap around screen
   if (bug->x < 0)
     bug->x = WORLD_WIDTH - 1;
@@ -175,6 +199,45 @@ u_int64_t moveBug(Bug *bug) {
   u_int64_t screen_pos = bug->y * WORLD_WIDTH + bug->x;
   return screen_pos;
 }
+
+// sum up the resources to the left, right, up and down from the bug
+// by summing up values of each resource type
+//
+void getMovementProbilities(Bug *bug, int *left_prob, int *up_prob) {
+  int screenx = 0, screeny = 0;
+  int left = 0, right = 0, up = 0, down = 0;
+  for (int startx = bug->x - bug->vision; startx < bug->x + bug->vision;
+       ++startx) {
+    for (int starty = bug->y - bug->vision; starty < bug->y + bug->vision;
+         ++starty) {
+      screenx = startx;
+      screeny = starty;
+      if (screenx < 0)
+        screenx = WORLD_WIDTH - (screenx * -1);
+      if (screenx >= WORLD_WIDTH)
+        screenx = screenx - WORLD_WIDTH;
+      if (screeny < 0)
+        screeny = WORLD_HEIGHT - (screeny * -1);
+      if (screeny >= WORLD_HEIGHT)
+        screeny = screeny - WORLD_HEIGHT;
+      int screen_pos = screeny * WORLD_WIDTH + screenx;
+      if (startx < bug->x) {
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          left += FOOD_HEALTH;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          left -= POISON_COST;
+        }
+      }
+
+      if (g_worldCell->type[screen_pos] == FOOD) {
+        *left_prob += g_worldCell->color[screen_pos].a;
+      } else if (g_worldCell->type[screen_pos] == POISON) {
+        *up_prob += g_worldCell->color[screen_pos].a;
+      }
+    }
+  }
+}
+
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos) {
   if (bugs[idx].isAlive == 0) {
     return;
@@ -341,6 +404,7 @@ int main(int argc, char **argv) {
   }
   // Initialize raylib
   InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Bug Simulation");
+  MaximizeWindow();
   SetTargetFPS(120);
 
   // Initialize random number generator
@@ -379,7 +443,7 @@ int main(int argc, char **argv) {
         g_worldCell->color[screen_pos] = BLACK;
         g_worldCell->bug_idx[screen_pos] = -1;
         g_worldCell->type[screen_pos] = EMPTY;
-        screen_pos = moveBug(&bugs[i]);
+        screen_pos = bugMove(&bugs[i]);
         // moving could mean the death of the bug
         if (bugs[i].health == 0) {
           bugDeath(bugs, i, screen_pos);
