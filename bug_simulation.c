@@ -213,21 +213,27 @@ u_int64_t bugMove(Bug *bug) {
 void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
   int screenx = 0, screeny = 0;
   double left = 0, right = 0, up = 0, down = 0;
-  for (int startx = bug->x - bug->vision; startx < bug->x + bug->vision;
+
+  for (int startx = bug->x - bug->vision; startx <= bug->x + bug->vision;
        ++startx) {
-    for (int starty = bug->y - bug->vision; starty < bug->y + bug->vision;
+    for (int starty = bug->y - bug->vision; starty <= bug->y + bug->vision;
          ++starty) {
       screenx = startx;
       screeny = starty;
+
+      // Wrap-around calculations:
       if (screenx < 0)
-        screenx = WORLD_WIDTH - (screenx * -1);
+        screenx = WORLD_WIDTH - (-screenx);
       if (screenx >= WORLD_WIDTH)
         screenx = screenx - WORLD_WIDTH;
       if (screeny < 0)
-        screeny = WORLD_HEIGHT - (screeny * -1);
+        screeny = WORLD_HEIGHT - (-screeny);
       if (screeny >= WORLD_HEIGHT)
         screeny = screeny - WORLD_HEIGHT;
+
       int screen_pos = screeny * WORLD_WIDTH + screenx;
+
+      // Horizontal contributions
       if (startx < bug->x) {
         if (g_worldCell->type[screen_pos] == FOOD) {
           left += FOOD_HEALTH;
@@ -245,6 +251,8 @@ void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
           right += bug->aggr + bug->drive;
         }
       }
+
+      // Vertical contributions
       if (starty < bug->y) {
         if (g_worldCell->type[screen_pos] == FOOD) {
           up += FOOD_HEALTH;
@@ -261,29 +269,25 @@ void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
         } else if (g_worldCell->type[screen_pos] == BUG) {
           down += bug->aggr + bug->drive;
         }
-      } else {
-        if (g_worldCell->type[screen_pos] == FOOD) {
-          *left_prob += g_worldCell->color[screen_pos].a;
-        } else if (g_worldCell->type[screen_pos] == POISON) {
-          *up_prob += g_worldCell->color[screen_pos].a;
-        }
       }
+
+      // Optionally, handle cells exactly at bug->x and bug->y as needed.
     }
   }
+
+  // Use softmax for horizontal and vertical probabilities.
   double alpha = 0.01;
   double weightL = exp(alpha * left);
   double weightR = exp(alpha * right);
-  double sumWeights = weightL + weightR;
-  double pLeft = weightL / sumWeights;
-  double pRight = weightR / sumWeights;
+  double pLeft = weightL / (weightL + weightR);
+
   double weightU = exp(alpha * up);
   double weightD = exp(alpha * down);
-  sumWeights = weightU + weightD;
-  double pUp = weightU / sumWeights;
-  double pDown = weightD / sumWeights;
+  double pUp = weightU / (weightU + weightD);
 
-  *left_prob = pLeft * 100;
-  *up_prob = pUp * 100;
+  // Store probabilities (scaled as percentages)
+  *left_prob = (int)(pLeft * 100);
+  *up_prob = (int)(pUp * 100);
 }
 
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos) {
