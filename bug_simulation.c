@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <gsl/gsl_rng.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -180,7 +181,6 @@ u_int64_t bugMove(Bug *bug) {
     } else {
       y_dir = 1;
     }
-    printf("X: %d Y: %d\n", x_dir, y_dir);
     bug->x += x_dir;
     bug->y += y_dir;
   }
@@ -212,7 +212,7 @@ u_int64_t bugMove(Bug *bug) {
 //
 void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
   int screenx = 0, screeny = 0;
-  int left = 0, right = 0, up = 0, down = 0;
+  double left = 0, right = 0, up = 0, down = 0;
   for (int startx = bug->x - bug->vision; startx < bug->x + bug->vision;
        ++startx) {
     for (int starty = bug->y - bug->vision; starty < bug->y + bug->vision;
@@ -270,10 +270,20 @@ void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
       }
     }
   }
-  printf("Left: %d Right: %d Up: %d Down: %d\n", left, right, up, down);
-  *left_prob = left * 100 / (left + right);
-  *up_prob = up * 100 / (up + down);
-  printf("Left: %d Up: %d\n", *left_prob, *up_prob);
+  double alpha = 0.01;
+  double weightL = exp(alpha * left);
+  double weightR = exp(alpha * right);
+  double sumWeights = weightL + weightR;
+  double pLeft = weightL / sumWeights;
+  double pRight = weightR / sumWeights;
+  double weightU = exp(alpha * up);
+  double weightD = exp(alpha * down);
+  sumWeights = weightU + weightD;
+  double pUp = weightU / sumWeights;
+  double pDown = weightD / sumWeights;
+
+  *left_prob = pLeft * 100;
+  *up_prob = pUp * 100;
 }
 
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos) {
