@@ -3,6 +3,7 @@
 // -lraylib -lm -ldl -lpthread -lGL -lrt -lgsl
 // opengl, raylib, gsl libraries required
 #include "raylib.h"
+#include <assert.h>
 #include <fcntl.h>
 #include <gsl/gsl_rng.h>
 #include <stdint.h>
@@ -71,6 +72,7 @@ void calculateDNA(Bug *bug);
 void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
 u_int64_t bugMove(Bug *bug);
 int bugsAreSameSex(Bug *bug1, Bug *bug2);
+void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob);
 // int birthABug(Bug *bug, u_int64_t screen_pos);
 
 void displayBugDNA(Bug *bug) {
@@ -178,6 +180,9 @@ u_int64_t bugMove(Bug *bug) {
     } else {
       y_dir = 1;
     }
+    printf("X: %d Y: %d\n", x_dir, y_dir);
+    bug->x += x_dir;
+    bug->y += y_dir;
   }
 
   // Wrap around screen
@@ -197,13 +202,15 @@ u_int64_t bugMove(Bug *bug) {
       bug->health -= MOVE_COST;
   }
   u_int64_t screen_pos = bug->y * WORLD_WIDTH + bug->x;
+  assert(screen_pos < WORLD_WIDTH * WORLD_HEIGHT);
+  assert(screen_pos >= 0);
   return screen_pos;
 }
 
 // sum up the resources to the left, right, up and down from the bug
 // by summing up values of each resource type
 //
-void getMovementProbilities(Bug *bug, int *left_prob, int *up_prob) {
+void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob) {
   int screenx = 0, screeny = 0;
   int left = 0, right = 0, up = 0, down = 0;
   for (int startx = bug->x - bug->vision; startx < bug->x + bug->vision;
@@ -226,16 +233,47 @@ void getMovementProbilities(Bug *bug, int *left_prob, int *up_prob) {
           left += FOOD_HEALTH;
         } else if (g_worldCell->type[screen_pos] == POISON) {
           left -= POISON_COST;
+        } else if (g_worldCell->type[screen_pos] == BUG) {
+          left += bug->aggr + bug->drive;
+        }
+      } else if (startx > bug->x) {
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          right += FOOD_HEALTH;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          right -= POISON_COST;
+        } else if (g_worldCell->type[screen_pos] == BUG) {
+          right += bug->aggr + bug->drive;
         }
       }
-
-      if (g_worldCell->type[screen_pos] == FOOD) {
-        *left_prob += g_worldCell->color[screen_pos].a;
-      } else if (g_worldCell->type[screen_pos] == POISON) {
-        *up_prob += g_worldCell->color[screen_pos].a;
+      if (starty < bug->y) {
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          up += FOOD_HEALTH;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          up -= POISON_COST;
+        } else if (g_worldCell->type[screen_pos] == BUG) {
+          up += bug->aggr + bug->drive;
+        }
+      } else if (starty > bug->y) {
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          down += FOOD_HEALTH;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          down -= POISON_COST;
+        } else if (g_worldCell->type[screen_pos] == BUG) {
+          down += bug->aggr + bug->drive;
+        }
+      } else {
+        if (g_worldCell->type[screen_pos] == FOOD) {
+          *left_prob += g_worldCell->color[screen_pos].a;
+        } else if (g_worldCell->type[screen_pos] == POISON) {
+          *up_prob += g_worldCell->color[screen_pos].a;
+        }
       }
     }
   }
+  printf("Left: %d Right: %d Up: %d Down: %d\n", left, right, up, down);
+  *left_prob = left * 100 / (left + right);
+  *up_prob = up * 100 / (up + down);
+  printf("Left: %d Up: %d\n", *left_prob, *up_prob);
 }
 
 void bugDeath(Bug *bugs, int idx, u_int64_t screen_pos) {
