@@ -18,26 +18,26 @@
 #define SCREEN_WIDTH 1820
 #define SCREEN_HEIGHT 980
 
-#define INIT_BUG_PROB 0.0011
-#define INIT_FOOD_PROB 0.5
-#define INIT_POISON_PROB 0.001
+#define INIT_BUG_PROB 0.0004
+#define INIT_FOOD_PROB 0.2
+#define INIT_POISON_PROB 0.0000
 
-#define REGENERATE_FOOD_RATE 0.0040
-#define REGENERATE_POISON_RATE 0.0001
+#define REGENERATE_FOOD_RATE 0.0001
+#define REGENERATE_POISON_RATE 0.00000
 #define MUTATION_RATE 0.30
 
 #define FOOD_HEALTH 10
 #define MOVE_COST_PROB 1.0
-#define POISON_COST 100
+#define POISON_COST 250
 #define MOVE_COST 1
 #define MATING_COST 10
-#define MIN_MATING_AGE 10
-#define MIN_FIGHTING_AGE 15
+#define MIN_MATING_AGE 100
+#define MIN_FIGHTING_AGE 10
 #define FIGHTING_COST 50
 int PAUSE = 0;
 
 Color FOOD_COLOR = {0, 255, 0, 255};
-#define FOOD_OPACITY 0
+#define FOOD_OPACITY 50
 
 typedef struct Bug {
   int x, y;             // Position
@@ -45,10 +45,10 @@ typedef struct Bug {
   int age;              // how many frames they've been alive for
   unsigned char health; // 0 - 255
   unsigned char sex;    // 0|1
-  unsigned char vision; // 0-4 distance the bug can see
-  unsigned char speed;  // 0 - 4 - how many squares the bug can move
-  unsigned char drive;  // 0 - 16 - how much the bug wnats to mate
-  unsigned char aggr;   // 0 - 16 - how much the bug wants to fight
+  unsigned char vision; // 0-15 distance the bug can see
+  unsigned char speed;  // 0 - 3 - how many squares the bug can move
+  unsigned char drive;  // 0 - 15 - how much the bug wnats to mate
+  unsigned char aggr;   // 0 - 15 - how much the bug wants to fight
   uint32_t dna;         // this doubles for the bug's color
 } Bug;
 
@@ -86,10 +86,10 @@ void displayBugDNA(Bug *bug) {
   }
   printf("\nHealth: (%u) -> %u\n", bug->health, bug->dna & 0xff);
   printf("Sex: (%u) %u\n", bug->sex, bug->dna >> 31 & 0x01);
-  printf("Vision:(%u) %u\n", bug->vision, bug->dna >> 29 & 0x03);
-  printf("Speed:(%u) %u\n", bug->speed, bug->dna >> 27 & 0x03);
-  printf("Drive:(%u) %u\n", bug->drive, bug->dna >> 23 & 0x0f);
-  printf("Aggr:(%u) %u\n", bug->aggr, bug->dna >> 19 & 0x0f);
+  printf("Vision:(%u) %u\n", bug->vision, bug->dna >> 27 & 0x0f);
+  printf("Speed:(%u) %u\n", bug->speed, bug->dna >> 25 & 0x03);
+  printf("Drive:(%u) %u\n", bug->drive, bug->dna >> 21 & 0x0f);
+  printf("Aggr:(%u) %u\n", bug->aggr, bug->dna >> 17 & 0x0f);
 }
 
 Bug *immaculateBirthABug(int i, Bug *bugs) {
@@ -106,10 +106,10 @@ Bug *immaculateBirthABug(int i, Bug *bugs) {
   bugs[g_numBugs].age = 0;
   bugs[g_numBugs].sex = gsl_rng_get(g_rng) % 2;
   bugs[g_numBugs].health = 255;
-  bugs[g_numBugs].vision = gsl_rng_get(g_rng) % 5;
-  bugs[g_numBugs].speed = gsl_rng_get(g_rng) % 5;
-  bugs[g_numBugs].drive = gsl_rng_get(g_rng) % 17;
-  bugs[g_numBugs].aggr = gsl_rng_get(g_rng) % 17;
+  bugs[g_numBugs].vision = gsl_rng_get(g_rng) % 16;
+  bugs[g_numBugs].speed = gsl_rng_get(g_rng) % 4;
+  bugs[g_numBugs].drive = gsl_rng_get(g_rng) % 16;
+  bugs[g_numBugs].aggr = gsl_rng_get(g_rng) % 16;
   calculateDNA(&bugs[g_numBugs]);
   displayBugDNA(&bugs[g_numBugs]);
   g_worldCell->color[i].r = bugs[g_numBugs].dna >> 24 & 0xff;
@@ -127,11 +127,11 @@ void calculateDNA(Bug *bug) {
   u_int16_t unused = 0xff;
   bug->dna = 0;
   bug->dna |= bug->sex << 31;
-  bug->dna |= bug->vision << 29;
-  bug->dna |= bug->speed << 27;
-  bug->dna |= bug->drive << 23;
-  bug->dna |= bug->aggr << 19;
-  bug->dna |= unused << 11;
+  bug->dna |= bug->vision << 27;
+  bug->dna |= bug->speed << 25;
+  bug->dna |= bug->drive << 21;
+  bug->dna |= bug->aggr << 17;
+  bug->dna |= unused << 9;
   bug->dna |= bug->health;
 }
 void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
@@ -140,6 +140,7 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
   u_int32_t health = 0;
   u_int32_t drive = 0;
   u_int32_t aggr = 0;
+  u_int32_t vision = 0;
 
   for (int i = 0; i < g_numBugs; ++i) {
     if (bugs[i].isAlive) {
@@ -147,13 +148,14 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
       health += bugs[i].health;
       drive += bugs[i].drive;
       aggr += bugs[i].aggr;
+      vision += bugs[i].vision;
     }
   }
   sprintf(status_line, "BUGS: %6u\tFrame: %8lu", alive, frame);
   DrawText(status_line, 10, SCREEN_HEIGHT - 23, 20, WHITE);
   if (ofp)
-    fprintf(ofp, "%u\t%lu\t%d\t%d\t%d\n", alive, frame, health / alive,
-            drive / alive, aggr / alive);
+    fprintf(ofp, "%u\t%lu\t%d\t%d\t%d\t%d\n", alive, frame, health / alive,
+            drive / alive, aggr / alive, vision / alive);
 }
 
 u_int64_t bugMove(Bug *bug) {
@@ -416,14 +418,25 @@ void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
 
 Bug *initializeWorld(Bug *bugs) {
   printf("Initializing world\n");
+  // create a block of poison
+  for (int x = 100; x < 300; ++x) {
+    for (int y = 100; y < 300; ++y) {
+      int i = y * WORLD_WIDTH + x;
+      g_worldCell->type[i] = POISON;
+      g_worldCell->color[i] = RED;
+    }
+  }
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
+    if (g_worldCell->type[i] == POISON) {
+      continue;
+    }
     if (gsl_rng_get(g_rng) % 10000 < INIT_BUG_PROB * 10000) {
       bugs = immaculateBirthABug(i, bugs);
     } else if (gsl_rng_get(g_rng) % 100 < INIT_FOOD_PROB * 100) {
       g_worldCell->type[i] = FOOD;
       g_worldCell->color[i] = FOOD_COLOR;
       g_worldCell->color[i].a = FOOD_OPACITY;
-    } else if (gsl_rng_get(g_rng) % 1000 < INIT_POISON_PROB * 1000) {
+    } else if (gsl_rng_get(g_rng) % 10000 < INIT_POISON_PROB * 10000) {
       g_worldCell->type[i] = POISON;
       g_worldCell->color[i] = RED;
     } else {
@@ -515,8 +528,10 @@ int main(int argc, char **argv) {
             continue;
           }
         } else if (g_worldCell->type[screen_pos] == BUG) {
-          if (bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]],
-                             &bugs[i])) {
+          if (!bugsAreSameSex(&bugs[g_worldCell->bug_idx[screen_pos]],
+                              &bugs[i])) {
+            // if bugs are not the same sex and their drive is high enough, and
+            // if they are old enough, and if they have enough health---mate
             if (bugs[i].drive > gsl_rng_get(g_rng) % 16 &&
                 bugs[i].health > MATING_COST &&
                 bugs[g_worldCell->bug_idx[screen_pos]].health > MATING_COST &&
