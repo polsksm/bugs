@@ -18,22 +18,26 @@
 #define SCREEN_WIDTH 1820
 #define SCREEN_HEIGHT 980
 
-#define INIT_BUG_PROB 0.0004
-#define INIT_FOOD_PROB 0.2
+#define INIT_BUG_PROB 0.0414
+#define INIT_FOOD_PROB 0.0
 #define INIT_POISON_PROB 0.0000
 
-#define REGENERATE_FOOD_RATE 0.0001
-#define REGENERATE_POISON_RATE 0.00000
+#define REGENERATE_FOOD_RATE 0.0000
+#define REGENERATE_POISON_RATE 0.000000
+#define FRAMES_TILL_FOOD 2
+#define FOOD_SIZE_X 50
+#define FOOD_SIZE_Y 50
+#define NBR_FOOD_SQUARES 400
 #define MUTATION_RATE 0.30
 
 #define FOOD_HEALTH 10
 #define MOVE_COST_PROB 1.0
 #define POISON_COST 250
 #define MOVE_COST 1
-#define MATING_COST 10
-#define MIN_MATING_AGE 100
-#define MIN_FIGHTING_AGE 10
-#define FIGHTING_COST 50
+#define MATING_COST 40
+#define FIGHTING_COST 40
+#define MIN_MATING_AGE 1
+#define MIN_FIGHTING_AGE 1
 int PAUSE = 0;
 
 Color FOOD_COLOR = {0, 255, 0, 255};
@@ -74,6 +78,7 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp);
 u_int64_t bugMove(Bug *bug);
 int bugsAreSameSex(Bug *bug1, Bug *bug2);
 void getMovementProbabilities(Bug *bug, int *left_prob, int *up_prob);
+void addFood(void);
 // int birthABug(Bug *bug, u_int64_t screen_pos);
 
 void displayBugDNA(Bug *bug) {
@@ -136,11 +141,12 @@ void calculateDNA(Bug *bug) {
 }
 void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
   char status_line[100];
-  u_int32_t alive = 0;
-  u_int32_t health = 0;
-  u_int32_t drive = 0;
-  u_int32_t aggr = 0;
-  u_int32_t vision = 0;
+  float alive = 0;
+  float health = 0;
+  float drive = 0;
+  float aggr = 0;
+  float vision = 0;
+  float speed = 0;
 
   for (int i = 0; i < g_numBugs; ++i) {
     if (bugs[i].isAlive) {
@@ -149,13 +155,15 @@ void updateStatusLine(Bug *bugs, u_int64_t frame, FILE *ofp) {
       drive += bugs[i].drive;
       aggr += bugs[i].aggr;
       vision += bugs[i].vision;
+      speed += bugs[i].speed;
     }
   }
-  sprintf(status_line, "BUGS: %6u\tFrame: %8lu", alive, frame);
+  sprintf(status_line, "BUGS: %.0f\tFrame: %8lu", alive, frame);
   DrawText(status_line, 10, SCREEN_HEIGHT - 23, 20, WHITE);
   if (ofp)
-    fprintf(ofp, "%u\t%lu\t%d\t%d\t%d\t%d\n", alive, frame, health / alive,
-            drive / alive, aggr / alive, vision / alive);
+    fprintf(ofp, "%.0f\t%lu\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n", alive, frame,
+            (float)(health / alive), drive / alive, aggr / alive,
+            vision / alive, speed / alive);
 }
 
 u_int64_t bugMove(Bug *bug) {
@@ -173,15 +181,15 @@ u_int64_t bugMove(Bug *bug) {
     getMovementProbabilities(bug, &left_prob, &up_prob);
     int x_dir = 0;
     if (gsl_rng_get(g_rng) % 100 < left_prob) {
-      x_dir = -1;
+      x_dir = -1 * bug->speed;
     } else {
-      x_dir = 1;
+      x_dir = bug->speed;
     }
     int y_dir = 0;
     if (gsl_rng_get(g_rng) % 100 < up_prob) {
-      y_dir = -1;
+      y_dir = -1 * bug->speed;
     } else {
-      y_dir = 1;
+      y_dir = bug->speed;
     }
     bug->x += x_dir;
     bug->y += y_dir;
@@ -419,15 +427,21 @@ void bugFight(Bug *bugs, int idx1, int idx2, u_int64_t screen_pos) {
 Bug *initializeWorld(Bug *bugs) {
   printf("Initializing world\n");
   // create a block of poison
-  for (int x = 100; x < 300; ++x) {
-    for (int y = 100; y < 300; ++y) {
+  for (int x = 250; x < 300; ++x) {
+    for (int y = 250; y < 300; ++y) {
       int i = y * WORLD_WIDTH + x;
       g_worldCell->type[i] = POISON;
       g_worldCell->color[i] = RED;
     }
   }
+  for (int i = 0; i < NBR_FOOD_SQUARES; ++i) {
+    addFood();
+  }
   for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
     if (g_worldCell->type[i] == POISON) {
+      continue;
+    }
+    if (g_worldCell->type[i] == FOOD) {
       continue;
     }
     if (gsl_rng_get(g_rng) % 10000 < INIT_BUG_PROB * 10000) {
@@ -573,19 +587,23 @@ int main(int argc, char **argv) {
         g_fights = 0;
         g_deaths = 0;
       }
-      // regenerate food and poison
+      // regenerate food and poison -- old way
       for (int i = 0; i < WORLD_WIDTH * WORLD_HEIGHT; ++i) {
         if (g_worldCell->type[i] == EMPTY) {
           if (gsl_rng_get(g_rng) % 10000 < REGENERATE_FOOD_RATE * 10000) {
             g_worldCell->type[i] = FOOD;
             g_worldCell->color[i] = FOOD_COLOR;
             g_worldCell->color[i].a = FOOD_OPACITY;
-          } else if (gsl_rng_get(g_rng) % 10000 <
-                     REGENERATE_POISON_RATE * 10000) {
+          } else if (gsl_rng_get(g_rng) % 100000 <
+                     REGENERATE_POISON_RATE * 100000) {
             g_worldCell->type[i] = POISON;
             g_worldCell->color[i] = RED;
           }
         }
+      }
+      // food regeneration - new way
+      if (frame % FRAMES_TILL_FOOD == 0) {
+        addFood();
       }
       updateStatusLine(bugs, frame, ofp);
       ++frame;
@@ -606,4 +624,21 @@ int main(int argc, char **argv) {
     fclose(ofp);
 
   return 0;
+}
+
+void addFood(void) {
+  // x and y start in random places
+  int startx = gsl_rng_get(g_rng) % WORLD_WIDTH;
+  int starty = gsl_rng_get(g_rng) % WORLD_HEIGHT;
+
+  for (int x = startx; x < startx + FOOD_SIZE_X; ++x) {
+    for (int y = starty; y < starty + FOOD_SIZE_Y; ++y) {
+      int i = y * WORLD_WIDTH + x;
+      if (i < WORLD_WIDTH * WORLD_HEIGHT && g_worldCell->type[i] != BUG) {
+        g_worldCell->type[i] = FOOD;
+        g_worldCell->color[i] = FOOD_COLOR;
+        g_worldCell->color[i].a = FOOD_OPACITY;
+      }
+    }
+  }
 }
